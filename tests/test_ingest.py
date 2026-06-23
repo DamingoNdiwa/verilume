@@ -5,6 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
+
 from verilume.core.schemas import DocumentChunk
 from verilume.ingest import (
     DocumentIngestor,
@@ -12,9 +15,11 @@ from verilume.ingest import (
     _extract_document_metadata,
     _normalize_pdf_text,
     chunk_text_semantic,
+    extract_pages,
     load_manifest,
     removable_documents,
     remove_documents,
+    supported_extensions,
     write_manifest,
 )
 from verilume.settings import AppSettings
@@ -49,6 +54,13 @@ def _chunk(text: str) -> DocumentChunk:
 
 
 class IngestCleanupTests(unittest.TestCase):
+    def test_supported_extensions_include_presentations_and_images(self) -> None:
+        extensions = supported_extensions()
+
+        self.assertTrue(
+            {".pptx", ".png", ".jpg", ".jpeg", ".tiff", ".webp"}.issubset(extensions)
+        )
+
     def test_document_metadata_is_extracted_from_research_text(self) -> None:
         text = """
         Replica Exchange Hamiltonian Monte Carlo for Hydrological Models
@@ -185,3 +197,57 @@ class IngestCleanupTests(unittest.TestCase):
                 FakeRemovalIngestor.last_retriever.deleted_paths,
                 expected_deleted_paths,
             )
+
+    def test_image_files_are_ocrd_through_image_handler(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            image_path = Path(tmp_dir) / "scan.png"
+            Image.new("RGB", (240, 80), "white").save(image_path)
+
+            with patch("verilume.ingest._ocr_pil_image", return_value="Scanned invoice total"):
+                pages, pdf_pages = extract_pages(image_path)
+
+            self.assertEqual(pages, [(1, "Scanned invoice total")])
+            self.assertEqual(pdf_pages, 0)
+
+    def test_scanned_pdf_pages_fall_back_to_ocr(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            image_path = tmp_path / "scan.png"
+            pdf_path = tmp_path / "scan.pdf"
+
+            image = Image.new("RGB", (240, 80), "white")
+            image.save(image_path)
+
+            pdf = canvas.Canvas(str(pdf_path), pagesize=(240, 80))
+            pdf.drawImage(ImageReader(str(image_path)), 0, 0, width=240, height=80)
+            pdf.showPage()
+            pdf.save()
+
+            with patch("verilume.ingest._ocr_pdf_page", return_value="Scanned PDF OCR text"):
+                pages, pdf_pages = extract_pages(pdf_path)
+
+            self.assertEqual(pages, [(1, "Scanned PDF OCR text")])
+            self.assertEqual(pdf_pages, 1)
+
+    def test_powerpoint_slides_are_extracted(self) -> None:
+        from pptx import Presentation
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pptx_path = Path(tmp_dir) / "deck.pptx"
+            presentation = Presentation()
+            slide = presentation.slides.add_slide(presentation.slide_layouts[1])
+            slide.shapes.title.text = "Quarterly Research Update"
+            slide.placeholders[1].text = "Pilot results improved document recall by 12 percent."
+            presentation.save(pptx_path)
+
+            pages, pdf_pages = extract_pages(pptx_path)
+
+            self.assertEqual(pdf_pages, 0)
+            self.assertEqual(len(pages), 1)
+            self.assertEqual(pages[0][0], 1)
+            self.assertIn("Quarterly Research Update", pages[0][1])
+            self.assertIn("document recall by 12 percent", pages[0][1])

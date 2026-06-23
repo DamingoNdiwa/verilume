@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from functools import lru_cache
 from pathlib import Path
 
 try:
@@ -32,6 +34,10 @@ _PDF_PHONE_ICON_FRAGMENT_RE = re.compile(r"(?:(?<=^)|(?<=\|))\s*/[A-Za-z]{1,6}(?
 _PDF_DELIMITED_ICON_FRAGMENT_RE = re.compile(
     r"(?:(?<=^)|(?<=\|))\s*/(?!/)[^\s|]{1,12}(?=(?:\s*\||\s*$))"
 )
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+_PRESENTATION_EXTENSIONS = {".pptx", ".pptm", ".ppsx", ".potx"}
+_OCR_CONFIDENCE_FLOOR = 0.35
+_PDF_OCR_RENDER_SCALE = 1.0
 
 ProgressCallback = Callable[[str, int, int], None]
 
@@ -67,6 +73,20 @@ class TextHandler(FileHandler):
         return [(None, _read_text_file(path))], 0
 
 
+class PptxHandler(FileHandler):
+    extensions = _PRESENTATION_EXTENSIONS
+
+    def extract_pages(self, path: Path) -> tuple[list[tuple[int | None, str]], int]:
+        return _extract_pptx(path)
+
+
+class ImageHandler(FileHandler):
+    extensions = _IMAGE_EXTENSIONS
+
+    def extract_pages(self, path: Path) -> tuple[list[tuple[int | None, str]], int]:
+        return _extract_image(path)
+
+
 FILE_HANDLERS: dict[str, FileHandler] = {}
 SUPPORTED_EXTENSIONS: set[str] = set()
 
@@ -85,6 +105,8 @@ def supported_extensions() -> set[str]:
 register_file_handler(PdfHandler())
 register_file_handler(DocxHandler())
 register_file_handler(TextHandler())
+register_file_handler(PptxHandler())
+register_file_handler(ImageHandler())
 
 
 class ReadonlyChromaError(RuntimeError):
@@ -186,23 +208,62 @@ def _read_text_file(path: Path) -> str:
     return raw.decode("utf-8", errors="ignore")
 
 
+@lru_cache(maxsize=1)
+def _ocr_engine():
+    from rapidocr_onnxruntime import RapidOCR
+
+    return RapidOCR()
+
+
+def _normalize_raw_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    normalized = normalized.replace("\u00ad", "")
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", normalized)
+    return normalized
+
+
+def _normalize_extracted_text(text: str) -> str:
+    normalized = _normalize_raw_text(text)
+    cleaned_lines: list[str] = []
+    for raw_line in normalized.splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if not line:
+            if cleaned_lines and cleaned_lines[-1] != "":
+                cleaned_lines.append("")
+            continue
+        cleaned_lines.append(line)
+    return "\n".join(cleaned_lines).strip()
+
+
 def _extract_pdf(path: Path) -> tuple[list[tuple[int | None, str]], int]:
     from pypdf import PdfReader
 
     reader = PdfReader(str(path))
     pages: list[tuple[int | None, str]] = []
+    pdfium_document = None
     for index, page in enumerate(reader.pages, start=1):
         text = _normalize_pdf_text(page.extract_text() or "")
+        if _pdf_page_needs_ocr(text):
+            if pdfium_document is None:
+                import pypdfium2 as pdfium
+
+                pdfium_document = pdfium.PdfDocument(str(path))
+            ocr_text = _ocr_pdf_page(pdfium_document, index - 1)
+            if ocr_text:
+                text = ocr_text
         if text.strip():
             pages.append((index, text))
+    if pdfium_document is not None:
+        try:
+            pdfium_document.close()
+        except Exception:
+            pass
     return pages, len(reader.pages)
 
 
 def _normalize_pdf_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFKC", text or "")
-    normalized = normalized.replace("\u00ad", "")
-    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
-    normalized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", normalized)
+    normalized = _normalize_raw_text(text)
     normalized = re.sub(r"(\w)-\n(?=\w)", r"\1", normalized)
 
     cleaned_lines: list[str] = []
@@ -223,6 +284,26 @@ def _normalize_pdf_text(text: str) -> str:
     return "\n".join(cleaned_lines).strip()
 
 
+def _pdf_page_needs_ocr(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text or "").strip()
+    if not normalized:
+        return True
+    alnum_count = len(re.findall(r"[A-Za-z0-9]", normalized))
+    word_count = len(re.findall(r"\b[A-Za-z0-9][A-Za-z0-9'_-]*\b", normalized))
+    return alnum_count <= 2 and word_count == 0
+
+
+def _ocr_pdf_page(pdfium_document, page_index: int) -> str:
+    rendered = pdfium_document[page_index].render(scale=_PDF_OCR_RENDER_SCALE).to_pil()
+    try:
+        return _ocr_pil_image(rendered)
+    finally:
+        try:
+            rendered.close()
+        except Exception:
+            pass
+
+
 def _extract_docx(path: Path) -> tuple[list[tuple[int | None, str]], int]:
     from docx import Document
 
@@ -235,6 +316,112 @@ def _extract_docx(path: Path) -> tuple[list[tuple[int | None, str]], int]:
             if values:
                 parts.append(" | ".join(values))
     return [(None, "\n".join(parts))], 0
+
+
+def _extract_pptx(path: Path) -> tuple[list[tuple[int | None, str]], int]:
+    from pptx import Presentation
+
+    presentation = Presentation(str(path))
+    pages: list[tuple[int | None, str]] = []
+    for slide_number, slide in enumerate(presentation.slides, start=1):
+        parts: list[str] = []
+        _collect_presentation_shapes_text(slide.shapes, parts)
+        notes = _presentation_notes_text(slide)
+        if notes:
+            parts.append(notes)
+        text = _normalize_extracted_text("\n".join(parts))
+        if text:
+            pages.append((slide_number, text))
+    return pages, 0
+
+
+def _collect_presentation_shapes_text(shapes, parts: list[str]) -> None:
+    for shape in shapes:
+        if getattr(shape, "has_text_frame", False):
+            text = _normalize_extracted_text(getattr(shape, "text", ""))
+            if text:
+                parts.append(text)
+        if getattr(shape, "has_table", False):
+            for row in shape.table.rows:
+                values = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if values:
+                    parts.append(" | ".join(values))
+        if hasattr(shape, "image"):
+            ocr_text = _ocr_image_blob(shape.image.blob)
+            if ocr_text:
+                parts.append(ocr_text)
+        if hasattr(shape, "shapes"):
+            _collect_presentation_shapes_text(shape.shapes, parts)
+
+
+def _presentation_notes_text(slide) -> str:
+    try:
+        notes_slide = slide.notes_slide
+    except Exception:
+        return ""
+    parts: list[str] = []
+    for shape in notes_slide.shapes:
+        if not getattr(shape, "has_text_frame", False):
+            continue
+        text = _normalize_extracted_text(getattr(shape, "text", ""))
+        if not text or text.lower() == "click to add notes":
+            continue
+        parts.append(text)
+    return _normalize_extracted_text("\n".join(parts))
+
+
+def _extract_image(path: Path) -> tuple[list[tuple[int | None, str]], int]:
+    from PIL import Image, ImageSequence
+
+    pages: list[tuple[int | None, str]] = []
+    with Image.open(str(path)) as image:
+        frames = [frame.copy() for frame in ImageSequence.Iterator(image)] if getattr(image, "is_animated", False) else [image.copy()]
+    total_frames = len(frames)
+    for index, frame in enumerate(frames, start=1):
+        try:
+            text = _ocr_pil_image(frame)
+        finally:
+            frame.close()
+        if text:
+            pages.append(((index if total_frames > 1 else 1), text))
+    return pages, 0
+
+
+def _ocr_image_blob(blob: bytes) -> str:
+    from PIL import Image
+
+    with Image.open(io.BytesIO(blob)) as image:
+        return _ocr_pil_image(image)
+
+
+def _ocr_pil_image(image) -> str:
+    import numpy as np
+    from PIL import Image, ImageOps
+
+    prepared = ImageOps.exif_transpose(image).convert("RGB")
+    if max(prepared.size) < 1200:
+        scale = max(2, int(1200 / max(1, max(prepared.size))))
+        prepared = prepared.resize(
+            (prepared.width * scale, prepared.height * scale),
+            Image.Resampling.LANCZOS,
+        )
+    prepared = ImageOps.autocontrast(prepared)
+    result, _ = _ocr_engine()(np.asarray(prepared))
+    return _ocr_result_text(result)
+
+
+def _ocr_result_text(result) -> str:
+    lines: list[str] = []
+    for item in result or []:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        text = str(item[1] or "").strip()
+        if not text:
+            continue
+        confidence = float(item[2]) if len(item) > 2 else 1.0
+        if confidence >= _OCR_CONFIDENCE_FLOOR:
+            lines.append(text)
+    return _normalize_extracted_text("\n".join(lines))
 
 
 def extract_pages(path: Path) -> tuple[list[tuple[int | None, str]], int]:
@@ -579,6 +766,7 @@ class DocumentIngestor:
             if result.errors:
                 preview = "; ".join(result.errors[:3])
                 raise IngestStateError(f"Staged ingestion failed: {preview}")
+            staged.retriever.close()
             self._install_staged_snapshot(staged_chroma=staged_chroma, staged_manifest=staged_manifest)
             return result
         finally:
@@ -738,6 +926,7 @@ class DocumentIngestor:
         chroma_backup = Path(str(backup["chroma_dir"]))
         manifest_backup = Path(str(backup["manifest_path"]))
 
+        self.retriever.close()
         if self.settings.chroma_dir.exists():
             _make_tree_writable(self.settings.chroma_dir)
             shutil.rmtree(self.settings.chroma_dir, ignore_errors=True)
@@ -753,6 +942,7 @@ class DocumentIngestor:
         self.retriever = self._create_retriever()
 
     def _install_staged_snapshot(self, *, staged_chroma: Path, staged_manifest: Path) -> None:
+        self.retriever.close()
         if self.settings.chroma_dir.exists():
             _make_tree_writable(self.settings.chroma_dir)
             shutil.rmtree(self.settings.chroma_dir, ignore_errors=True)

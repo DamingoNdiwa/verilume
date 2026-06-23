@@ -1035,6 +1035,43 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertEqual(rag.generator.model_calls, [])
         self.assertEqual(rag.web_search.queries, [])
 
+    def test_local_file_fact_question_anchors_to_explicit_filename_for_ocr_chunk(self) -> None:
+        scanned_source = LocalSource(
+            label="S1",
+            document="scanned-smoke.pdf",
+            page=1,
+            chunk_id="scan-chunk",
+            text="VERILUMEOCRTOKENAURORA-731",
+            score=0.3098,
+        )
+        image_source = LocalSource(
+            label="S2",
+            document="ocr-smoke.png",
+            page=1,
+            chunk_id="image-chunk",
+            text="VERILUMEOCRTOKENAURORA-731",
+            score=0.1647,
+        )
+        rag = self._make_rag(
+            local_answer=LOCAL_UNKNOWN,
+            model_answer="Model answer that should not be used.",
+            local_sources=[],
+        )
+        rag.settings = AppSettings(hf_token="token", enable_web_search=False)
+        rag.retriever = FakeRetriever([scanned_source, image_source])
+
+        result = rag.ask(
+            "In the uploaded file scanned-smoke.pdf, what OCR token appears in the document?"
+        )
+
+        self.assertEqual(result.confidence, "local-grounded")
+        self.assertFalse(result.used_web)
+        self.assertIn("AURORA-731", result.answer)
+        self.assertEqual([source.document for source in result.local_sources], ["scanned-smoke.pdf"])
+        self.assertEqual(rag.generator.local_calls, [])
+        self.assertEqual(rag.generator.model_calls, [])
+        self.assertEqual(rag.web_search.queries, [])
+
     def test_local_gap_uses_model_and_web_when_web_is_enabled(self) -> None:
         rag = self._make_rag(
             local_answer=LOCAL_UNKNOWN,

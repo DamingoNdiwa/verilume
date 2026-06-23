@@ -78,6 +78,17 @@ class ChromaRetriever:
         self._collection = None
         self._client = None
 
+    def close(self) -> None:
+        client = self._client
+        self._collection = None
+        self._client = None
+        if client is None:
+            return
+        try:
+            client.close()
+        except Exception:
+            pass
+
     def reset(self) -> None:
         self.invalidate_caches(drop_disk=True)
         client = self.client

@@ -524,7 +524,7 @@ h1, h2, h3 {
 }
 
 [data-testid="stFileUploaderDropzoneInstructions"]::after {
-  content: "Supported:\\A PDF • DOCX • TXT • MD • CSV\\A\\A Maximum size:\\A 200 MB per file";
+  content: "Supported:\\A PDF • Scanned PDF • DOCX • PPTX • Images • TXT • MD • CSV\\A\\A Maximum size:\\A 200 MB per file";
   white-space: pre-line;
   display: block;
   color: var(--veri-muted);

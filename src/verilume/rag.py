@@ -13,6 +13,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from difflib import SequenceMatcher
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import urlparse
 
 from verilume.core.agents import (
@@ -1770,6 +1771,7 @@ def _should_answer_local_file_fact_from_evidence(question: str) -> bool:
     )
     fact_markers = (
         "amount",
+        "code",
         "date",
         "id",
         "issued",
@@ -1779,7 +1781,9 @@ def _should_answer_local_file_fact_from_evidence(question: str) -> bool:
         "result",
         "score",
         "session",
+        "text",
         "title",
+        "token",
         "valid",
     )
     local_specific_markers = (
@@ -1797,11 +1801,31 @@ def _should_answer_local_file_fact_from_evidence(question: str) -> bool:
     has_document_noun = any(noun in normalized for noun in document_nouns)
     has_fact_marker = any(marker in normalized for marker in fact_markers)
     has_anchor = any(marker in normalized for marker in local_specific_markers) or bool(
-        re.search(r"\b[a-z0-9][a-z0-9._-]*\.(?:pdf|docx?|txt|md|csv)\b", normalized)
+        _explicit_local_file_names(normalized)
     )
     refers_to_document = bool(re.search(r"\b(?:on|in|from|inside|within)\s+the\b", normalized))
 
     return has_question_shape and has_document_noun and has_fact_marker and has_anchor and refers_to_document
+
+
+def _explicit_local_file_names(text: str) -> tuple[str, ...]:
+    matches = re.findall(
+        r"\b[a-z0-9][a-z0-9._-]*\."
+        r"(?:pdf|docx?|pptx|pptm|ppsx|potx|txt|md|markdown|csv|png|jpe?g|bmp|gif|tiff?|webp)\b",
+        (text or "").lower(),
+    )
+    return tuple(dict.fromkeys(matches))
+
+
+def _source_matches_explicit_local_file_name(source, file_names: Sequence[str]) -> bool:
+    if not file_names:
+        return False
+    document_name = Path(getattr(source, "document", "")).name.lower()
+    document_stem = Path(document_name).stem
+    return any(
+        file_name == document_name or Path(file_name).stem == document_stem
+        for file_name in file_names
+    )
 
 
 def _local_file_fact_answer(question: str, local_sources: Sequence[LocalSource], ranked_evidence) -> str:
@@ -2714,8 +2738,17 @@ def _filter_relevant_local_sources(
     if not terms:
         return _relabel_local_sources(values[:limit])
     scientific_query = _looks_like_scientific_local_query(query)
+    explicit_file_names = _explicit_local_file_names(query) if local_file_question else ()
 
     if local_file_question:
+        if explicit_file_names:
+            exact_file_values = [
+                source
+                for source in values
+                if _source_matches_explicit_local_file_name(source, explicit_file_names)
+            ]
+            if exact_file_values:
+                values = exact_file_values
         rare_term_values = _rare_matched_terms(values, terms)
         if rare_term_values:
             rare_values = [
@@ -2734,6 +2767,7 @@ def _filter_relevant_local_sources(
         fast_score = float(metadata.get("fast_rerank_score", source.score or 0.0) or 0.0)
         retrieval = str(metadata.get("retrieval", "")).lower()
         semantic_score = float(source.score or 0.0)
+        explicit_file_match = _source_matches_explicit_local_file_name(source, explicit_file_names)
 
         if identity_tokens and not _source_matches_identity(
             f"{source.document} {source.text}",
@@ -2752,14 +2786,15 @@ def _filter_relevant_local_sources(
 
         if local_file_question:
             keep = (
-                overlap >= 2
+                explicit_file_match
+                or overlap >= 2
                 or coverage >= 0.24
                 or ("bm25" in retrieval and overlap >= 1 and fast_score >= 0.58)
                 or semantic_score >= 0.82
             )
         else:
             keep = (
-                overlap >= 1
+                overlap >= 2
                 or coverage >= 0.18
                 or fast_score >= 0.62
                 or semantic_score >= 0.78

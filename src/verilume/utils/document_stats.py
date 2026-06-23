@@ -37,6 +37,7 @@ def collect_document_stats(settings: AppSettings) -> dict[str, int]:
 
 
 def _persisted_collection_count(settings: AppSettings) -> int:
+    client = None
     try:
         client = chromadb.PersistentClient(path=str(settings.chroma_dir))
         collection = client.get_or_create_collection(
@@ -46,6 +47,12 @@ def _persisted_collection_count(settings: AppSettings) -> int:
         return int(collection.count())
     except Exception:
         return 0
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
 
 
 def _count_pdf_pages(path: Path) -> int:

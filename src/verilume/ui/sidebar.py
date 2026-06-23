@@ -136,7 +136,7 @@ def render_sidebar(
 <div class="veri-upload-info">
   <strong>Build your knowledge base</strong><br><br>
   <span>Supported</span><br>
-  PDF · DOCX · TXT · MD · CSV<br><br>
+    PDF · Scanned PDF · DOCX · PPTX · Images · TXT · MD · CSV<br><br>
   <span>Maximum size</span><br>
   200 MB per file
 </div>
