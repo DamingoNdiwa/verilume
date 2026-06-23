@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import re
 import time
 import unicodedata
+from collections import Counter
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import date, datetime
@@ -108,6 +110,8 @@ PERSON_NAME_ACTION_BOUNDARIES = {
     "signed",
     "takes",
     "took",
+    "update",
+    "updates",
     "urges",
     "urged",
     "visits",
@@ -322,6 +326,34 @@ IDENTITY_LOCAL_NEGATIVE_MARKERS = (
     "tax",
     "ticket",
     "visa",
+)
+IDENTITY_WEB_CLUSTER_MARKERS = (
+    "about",
+    "author",
+    "bio",
+    "biography",
+    "data science",
+    "doctoral",
+    "faculty",
+    "github",
+    "homepage",
+    "luxembourg",
+    "mathematics",
+    "orcid",
+    "phd",
+    "portfolio",
+    "profile",
+    "professor",
+    "publication",
+    "research",
+    "researcher",
+    "scholar",
+    "scientist",
+    "statistics",
+    "statistician",
+    "student",
+    "the conversation",
+    "wikipedia",
 )
 SCIENTIFIC_LOCAL_POSITIVE_MARKERS = (
     "abstract",
@@ -590,8 +622,13 @@ class VerilumeRAG:
 
         query_understanding = self.query_understanding_agent.understand(question)
         local_file_question = (
-            self._is_local_file_question(question)
+            self._is_local_file_question(original_question)
+            or self._is_local_file_question(question)
             or interpretation.intent == "local_document"
+        )
+        local_file_fact_question = (
+            _should_answer_local_file_fact_from_evidence(original_question)
+            or _should_answer_local_file_fact_from_evidence(question)
         )
         query_understanding.local_file_question = local_file_question
         identity_tokens = _identity_tokens(question)
@@ -683,6 +720,39 @@ class VerilumeRAG:
             response = self._answer_local_file_question(query, local_sources, diagnostics, on_stage)
             return _attach_conversation_state(response, conversation.state, original_question, question)
 
+        if local_file_question and local_sources and local_file_fact_question:
+            _emit_stage(on_stage, "Answering from local file evidence...")
+            ranked_evidence, _ = _add_evidence_diagnostics(
+                diagnostics,
+                question,
+                local_sources,
+                [],
+                _local_file_evidence_answer(local_sources),
+                True,
+                None,
+                False,
+                self.settings,
+            )
+            answer = _local_file_fact_answer(original_question, local_sources, ranked_evidence)
+            used_local_sources = _local_sources_used_in_answer(local_sources, answer) or local_sources
+            _finalize_evidence_diagnostics(
+                diagnostics,
+                answer=answer,
+                used_local_sources=used_local_sources,
+                used_web_sources=[],
+                model_answer=None,
+                model_sufficient=False,
+            )
+            response = RAGResponse(
+                answer,
+                used_local_sources,
+                [],
+                False,
+                "local-grounded",
+                diagnostics,
+            )
+            return _attach_conversation_state(response, conversation.state, original_question, question)
+
         local_answer = LOCAL_UNKNOWN
         local_sufficient = False
         local_answer_relevant = False
@@ -705,36 +775,35 @@ class VerilumeRAG:
         diagnostics["local_answer_relevant"] = local_answer_relevant
         diagnostics["local_sufficient"] = local_sufficient
 
-        if local_sufficient and not current_or_web:
-            used_local_sources = _local_sources_used_in_answer(local_sources, local_answer) or local_sources
-            _add_evidence_diagnostics(
+        if identity_tokens and local_sources and strong_local and not local_sufficient and not current_or_web:
+            _emit_stage(on_stage, "Preparing local identity evidence...")
+            ranked_evidence, _ = _add_evidence_diagnostics(
                 diagnostics,
                 question,
-                used_local_sources,
+                local_sources,
                 [],
-                local_answer,
-                True,
+                None,
+                False,
                 None,
                 False,
                 self.settings,
             )
-            _emit_stage(on_stage, "✓ Local evidence answered the question")
-            response = RAGResponse(
-                local_answer,
-                used_local_sources,
-                [],
-                False,
-                "local-grounded",
-                diagnostics,
-            )
-            return _attach_conversation_state(response, conversation.state, original_question, question)
+            local_answer = _fallback_from_ranked_evidence(ranked_evidence, question=question)
+            local_answer_relevant = True
+            local_sufficient = self._is_sufficient(local_answer)
+            diagnostics["local_identity_fallback"] = True
 
+        prefer_local_answer = bool(local_sufficient and not current_or_web and not force_web)
+        diagnostics["prefer_local_answer"] = prefer_local_answer
         should_use_web = _should_use_web(
             question=question,
             force_web=force_web or planned_web,
             web_enabled=self.settings.enable_web_search,
             query_understanding=query_understanding,
         ) or bool(generation_error and web_ready)
+        if prefer_local_answer:
+            should_use_web = False
+            diagnostics["web_reason"] = "local_answer_sufficient"
         diagnostics["web_requested"] = should_use_web
         diagnostics["web_provider"] = self.settings.web_search_provider_label()
 
@@ -761,50 +830,26 @@ class VerilumeRAG:
 
         if should_use_web and web_ready:
             _emit_stage(on_stage, "Checking AI knowledge and web evidence...")
-            skip_model_for_entity = (
-                query_understanding.personal_company_entity_lookup
-                and not query_understanding.requires_date_reconciliation
+            current_web_validation = _requires_current_source_verification(
+                question,
+                query_understanding,
             )
-            skip_model_for_current_role = bool(_current_public_role_context(question))
-            skip_model_for_public_office = _is_public_office_query(question, query_understanding)
-            skip_model_for_age_at_office = _looks_like_age_at_office_query(question)
-            skip_model_for_plan = not search_plan.need_model
-            skip_model = (
-                skip_model_for_entity
-                or skip_model_for_current_role
-                or skip_model_for_public_office
-                or skip_model_for_age_at_office
-                or skip_model_for_plan
-            )
+            parallel_model_with_web = True
+            diagnostics["parallel_model_with_web"] = not generation_error
             with ThreadPoolExecutor(max_workers=2) as executor:
                 web_future = executor.submit(
                     self._search_web_sources,
                     web_queries,
                     question=question,
                     prefer_fast_public_search=(
-                        skip_model_for_entity
-                        or skip_model_for_current_role
-                        or skip_model_for_public_office
+                        current_web_validation
                         or _looks_like_public_knowledge_query(question)
-                        or skip_model_for_age_at_office
-                        or skip_model_for_plan
+                        or _looks_like_age_at_office_query(question)
                     ),
                 )
                 model_future: Future | None = None
-                if not generation_error and not skip_model:
+                if not generation_error:
                     model_future = executor.submit(self.generator.answer_model_knowledge, query, list(history))
-                elif skip_model_for_age_at_office:
-                    diagnostics["model_skipped"] = "age-at-office query uses web evidence first"
-                elif skip_model_for_entity:
-                    diagnostics["model_skipped"] = "entity lookup uses web evidence first"
-                elif skip_model_for_current_role and "current" in original_question.lower():
-                    diagnostics["model_skipped"] = "current public role uses web evidence first"
-                elif skip_model_for_public_office:
-                    diagnostics["model_skipped"] = "current public office query uses web evidence first"
-                elif skip_model_for_current_role:
-                    diagnostics["model_skipped"] = "current public role uses web evidence first"
-                elif skip_model_for_plan:
-                    diagnostics["model_skipped"] = f"{search_plan.intent} plan uses source evidence first"
 
                 try:
                     web_sources = web_future.result()
@@ -832,7 +877,7 @@ class VerilumeRAG:
                         diagnostics["generation_error_confidence"] = _generation_error_confidence(generation_error)
                     except Exception as exc:
                         diagnostics["model_error"] = _clean_error_message(exc)
-        elif not local_sufficient and not generation_error:
+        elif not generation_error:
             _emit_stage(on_stage, "Checking AI knowledge...")
             try:
                 model_answer = self.generator.answer_model_knowledge(query, list(history))
@@ -974,6 +1019,15 @@ class VerilumeRAG:
         if web_sources and not used_web_sources and (current_or_web or not used_local_sources):
             answer = _fallback_answer_from_web_results(web_sources=web_sources, previous_answer=answer)
             used_web_sources = _web_sources_used_in_answer(web_sources, answer)
+
+        _finalize_evidence_diagnostics(
+            diagnostics,
+            answer=answer,
+            used_local_sources=used_local_sources,
+            used_web_sources=used_web_sources,
+            model_answer=model_answer,
+            model_sufficient=model_sufficient,
+        )
 
         display_web_sources = _best_web_sources(web_sources, used_web_sources)
         confidence = self._confidence(
@@ -1569,7 +1623,7 @@ class VerilumeRAG:
             r"\bin\s+(?:my|the\s+uploaded|uploaded|the\s+indexed|indexed|local)\s+(?:file|files|document|documents)\b",
             r"\b(?:do\s+my|does\s+my|do\s+the\s+uploaded|is\s+there).+\b(?:document|file|upload|index|local)\b",
         )
-        return any(re.search(pattern, lower) for pattern in intent_patterns)
+        return any(re.search(pattern, lower) for pattern in intent_patterns) or _should_answer_local_file_fact_from_evidence(question)
 
     @staticmethod
     def _confidence(*, local_sources, used_web, answer, evidence_confidence, time_sensitive) -> str:
@@ -1693,6 +1747,154 @@ def _should_answer_local_file_question_directly(question: str) -> bool:
         normalized.startswith(("which document", "which file", "what document", "what file"))
         or re.search(r"\b(?:contains?|mentions?|where)\b", normalized)
     )
+
+
+def _should_answer_local_file_fact_from_evidence(question: str) -> bool:
+    normalized = normalize_intent_text(question)
+    if not normalized or _should_answer_local_file_question_directly(question):
+        return False
+
+    document_nouns = (
+        "certificate",
+        "attestation",
+        "document",
+        "file",
+        "guide",
+        "invoice",
+        "overview",
+        "payment certificate",
+        "pdf",
+        "receipt",
+        "report",
+        "session",
+        "transcript",
+    )
+    fact_markers = (
+        "amount",
+        "date",
+        "id",
+        "issued",
+        "name",
+        "number",
+        "page",
+        "result",
+        "score",
+        "session",
+        "title",
+        "valid",
+    )
+    local_specific_markers = (
+        "sproochentest",
+        "certificate",
+        "payment certificate",
+        "uploaded",
+        "indexed",
+        "local",
+        "database",
+        "knowledge base",
+    )
+
+    has_question_shape = bool(re.search(r"\b(?:what|which|when|where|who)\b", normalized))
+    has_document_noun = any(noun in normalized for noun in document_nouns)
+    has_fact_marker = any(marker in normalized for marker in fact_markers)
+    has_anchor = any(marker in normalized for marker in local_specific_markers) or bool(
+        re.search(r"\b[a-z0-9][a-z0-9._-]*\.(?:pdf|docx?|txt|md|csv)\b", normalized)
+    )
+    refers_to_document = bool(re.search(r"\b(?:on|in|from|inside|within)\s+the\b", normalized))
+
+    return has_question_shape and has_document_noun and has_fact_marker and has_anchor and refers_to_document
+
+
+def _local_file_fact_answer(question: str, local_sources: Sequence[LocalSource], ranked_evidence) -> str:
+    direct_answer = _local_file_date_answer(question, local_sources)
+    if direct_answer:
+        return direct_answer
+    return _fallback_from_ranked_evidence(ranked_evidence, question=question)
+
+
+def _local_file_date_answer(question: str, local_sources: Sequence[LocalSource]) -> str | None:
+    normalized = normalize_intent_text(question)
+    if "date" not in normalized or not local_sources:
+        return None
+
+    best_source = local_sources[0]
+    best_date = _best_local_date_candidate(question, getattr(best_source, "text", ""))
+    if not best_date:
+        return None
+
+    subject = _local_file_subject_from_question(question) or best_source.document
+    return (
+        f"The exam date on {subject} is {best_date} [{best_source.label}].\n\n"
+        "Confidence: High"
+    )
+
+
+def _best_local_date_candidate(question: str, text: str) -> str | None:
+    if not text:
+        return None
+
+    normalized_question = _fold_text(question)
+    exam_date_requested = bool(
+        re.search(r"\b(?:exam|test|session)\s+date\b", normalized_question)
+        or ("date" in normalized_question and "exam" in normalized_question)
+    )
+    payment_date_requested = bool(
+        re.search(r"\b(?:payment|fee|amount)\s+date\b", normalized_question)
+        or re.search(r"\bdate\s+(?:of\s+)?(?:payment|fee)\b", normalized_question)
+        or "paid on" in normalized_question
+    )
+    preferred_terms: list[str] = []
+    if exam_date_requested or any(term in normalized_question for term in ("exam", "session", "test")):
+        preferred_terms.extend(["session", "exam", "examen", "sproochentest", "passation"])
+    if payment_date_requested:
+        preferred_terms.extend(["payment", "paid", "regle", "montant", "en date du"])
+    if not preferred_terms:
+        preferred_terms.append("date")
+
+    candidates: list[tuple[int, int, str]] = []
+    for match in re.finditer(r"\b(?:\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2}(?:-[A-Za-z]{2})?)\b", text):
+        raw_value = match.group(0)
+        normalized_value = re.sub(r"^(\d{4}-\d{2}-\d{2})-[A-Za-z]{2}$", r"\1", raw_value)
+        context = _fold_text(text[max(0, match.start() - 48) : min(len(text), match.end() + 48)])
+        score = sum(3 for term in preferred_terms if term in context)
+
+        if exam_date_requested:
+            if "session" in context:
+                score += 4
+            if any(term in context for term in ("en date du", "paid", "regle", "montant")) and "session" not in context:
+                score -= 6
+        if payment_date_requested:
+            if any(term in context for term in ("session", "exam", "examen", "passation")):
+                score -= 1
+
+        if normalized_value != raw_value:
+            score += 1
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized_value):
+            score += 1
+
+        candidates.append((score, match.start(), normalized_value))
+
+    if not candidates:
+        return None
+
+    best_score, _position, best_value = max(candidates, key=lambda item: (item[0], item[1]))
+    if best_score <= 0:
+        return None
+    return best_value
+
+
+def _local_file_subject_from_question(question: str) -> str | None:
+    cleaned = re.sub(r"\s+", " ", (question or "").strip()).strip(" ?!.")
+    match = re.search(r"\b(?:on|in|from)\s+(?:the\s+)?(.+)$", cleaned, flags=re.IGNORECASE)
+    if not match:
+        return None
+    subject = match.group(1).strip(" ,:;")
+    if not subject:
+        return None
+    lower = subject.lower()
+    if not lower.startswith(("the ", "my ", "this ", "that ")):
+        subject = f"the {subject}"
+    return subject
 
 
 def _response_cache_ttl(response: RAGResponse) -> float:
@@ -2105,6 +2307,55 @@ def _diagnostic_evidence_winner(winner, *, used_local: bool, used_model: bool, u
     return value
 
 
+def _finalize_evidence_diagnostics(
+    diagnostics,
+    *,
+    answer: str,
+    used_local_sources: Sequence[LocalSource],
+    used_web_sources: Sequence[WebSource],
+    model_answer: str | None,
+    model_sufficient: bool,
+) -> None:
+    used_local = bool(used_local_sources)
+    used_web = bool(used_web_sources)
+    used_model = False
+    if model_sufficient and _model_answer_available(model_answer):
+        if not used_local and not used_web:
+            used_model = True
+        elif _model_answer_aligns_with_answer(model_answer, answer):
+            used_model = True
+    diagnostics["used_local"] = used_local
+    diagnostics["used_model_knowledge"] = used_model
+    diagnostics["used_web"] = used_web
+    diagnostics["evidence_streams"] = [
+        stream
+        for stream, enabled in (
+            ("local", used_local),
+            ("model_knowledge", used_model),
+            ("web", used_web),
+        )
+        if enabled
+    ]
+    enabled_count = sum(1 for enabled in (used_local, used_model, used_web) if enabled)
+    if enabled_count >= 2:
+        diagnostics["evidence_winner"] = "hybrid"
+    elif used_web:
+        diagnostics["evidence_winner"] = "web"
+    elif used_local:
+        diagnostics["evidence_winner"] = "local"
+    elif used_model:
+        diagnostics["evidence_winner"] = "model_knowledge"
+
+
+def _model_answer_aligns_with_answer(model_answer: str | None, answer: str | None) -> bool:
+    model_terms = set(query_terms(model_answer or ""))
+    answer_terms = set(query_terms(_remove_citation_text(_strip_model_knowledge_footer(answer or ""))))
+    if not model_terms or not answer_terms:
+        return False
+    overlap = len(model_terms & answer_terms) / max(1, min(len(model_terms), len(answer_terms)))
+    return overlap >= 0.45
+
+
 def _local_answer_supports_question(
     question: str,
     answer: str,
@@ -2280,9 +2531,11 @@ def _web_results_are_answerable_for_current_role(question, web_sources) -> bool:
         return True
     role = context["role"]
     for source in web_sources:
+        if _is_generic_official_directory_source(source):
+            continue
         if role == "secretary of state" and not _is_us_secretary_of_state_source(source):
             continue
-        if _extract_role_candidate(source, role):
+        if _extract_role_candidate(source, role, allow_title_fallback=False):
             return True
     return False
 
@@ -2319,6 +2572,8 @@ def _web_source_rank_score(source, query_terms):
         score -= 2.5
     if any(marker in haystack for marker in ("blog", "opinion", "editorial")):
         score -= 1.5
+    if _is_generic_official_directory_source(source):
+        score -= 3.5
     if isinstance(source.score, (int, float)):
         score += min(1.0, max(0.0, float(source.score)))
     if _is_noisy_web_source(source):
@@ -2334,6 +2589,20 @@ def _is_authoritative_web_source(source):
     if any(marker in domain or marker in url for marker in OFFICIAL_WEB_MARKERS):
         return True
     return any(marker in title for marker in ("royal house", "white house"))
+
+
+def _is_generic_official_directory_source(source) -> bool:
+    haystack = f"{source.title} {source.url} {source.content}".lower()
+    return any(
+        marker in haystack
+        for marker in (
+            "find and contact elected officials",
+            "contact elected officials",
+            "current list of all elected officials",
+            "government directory",
+            "officials directory",
+        )
+    )
 
 
 def _news_source_rank_boost(source, query_terms) -> float:
@@ -2535,7 +2804,54 @@ def _normalized_source_tokens(source):
 def _filter_web_sources_for_identity(sources, identity_tokens):
     if not identity_tokens:
         return list(sources)
-    return _relabel_web_sources([s for s in sources if not _is_noisy_web_source(s) and _source_matches_identity(f"{s.title} {s.url} {s.content}", identity_tokens)])
+    filtered = [
+        source
+        for source in sources
+        if not _is_noisy_web_source(source)
+        and _source_matches_identity(f"{source.title} {source.url} {source.content}", identity_tokens)
+    ]
+    if len(filtered) <= 1:
+        return _relabel_web_sources(filtered)
+
+    dominant_terms = _identity_web_dominant_terms(filtered)
+    relevant = [
+        source
+        for source in filtered
+        if _identity_web_source_is_relevant(source, dominant_terms)
+    ]
+    return _relabel_web_sources(relevant or filtered)
+
+
+def _identity_web_dominant_terms(sources) -> set[str]:
+    counts: Counter[str] = Counter()
+    for source in sources:
+        text = _normalized_source_text(source)
+        counts.update(
+            marker for marker in IDENTITY_WEB_CLUSTER_MARKERS if _normalized_phrase_in_text(text, marker)
+        )
+    return {marker for marker, count in counts.items() if count >= 2}
+
+
+def _identity_web_source_is_relevant(source, dominant_terms: set[str]) -> bool:
+    text = _normalized_source_text(source)
+    strong_terms = set(IDENTITY_LOCAL_STRONG_MARKERS) | {"faculty", "professor", "the conversation", "wikipedia"}
+    if any(_normalized_phrase_in_text(text, marker) for marker in strong_terms):
+        return True
+    if not dominant_terms:
+        return True
+    informative_terms = dominant_terms - {"about", "bio", "profile", "research"}
+    if not informative_terms:
+        return True
+    matches = sum(1 for marker in informative_terms if _normalized_phrase_in_text(text, marker))
+    return matches >= 1
+
+
+def _normalized_phrase_in_text(text: str, marker: str) -> bool:
+    normalized_text = f" {re.sub(r'[^a-z0-9]+', ' ', text or '').strip()} "
+    normalized_marker = re.sub(r'[^a-z0-9]+', ' ', marker or '').strip()
+    if not normalized_marker:
+        return False
+    return f" {normalized_marker} " in normalized_text
 
 
 def _source_matches_identity(text, identity_tokens):
@@ -2804,7 +3120,7 @@ def _dedupe_web_queries(queries: Sequence[str]) -> list[str]:
     unique = []
     seen = set()
     for query in queries:
-        cleaned = re.sub(r"\s+", " ", (query or "").strip())
+        cleaned = _normalize_web_query_candidate(query)
         if not cleaned:
             continue
         key = _web_query_key(cleaned)
@@ -2813,6 +3129,31 @@ def _dedupe_web_queries(queries: Sequence[str]) -> list[str]:
         seen.add(key)
         unique.append(cleaned)
     return unique
+
+
+def _normalize_web_query_candidate(query) -> str:
+    text = re.sub(r"\s+", " ", str(query or "").strip())
+    if not text:
+        return ""
+    if text.startswith("{") and text.endswith("}"):
+        candidate = _extract_embedded_query_text(text)
+        if candidate:
+            text = candidate
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _extract_embedded_query_text(text: str) -> str:
+    try:
+        parsed = ast.literal_eval(text)
+    except Exception:
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    for key in ("query", "resolved_query", "text"):
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _web_query_key(query: str) -> str:
@@ -3118,9 +3459,11 @@ def _current_public_fact_evidence(question, web_sources):
     for source in web_sources:
         if _is_noisy_web_source(source):
             continue
+        if _is_generic_official_directory_source(source):
+            continue
         if role == "secretary of state" and not _is_us_secretary_of_state_source(source):
             continue
-        candidates.append((source, _extract_role_candidate(source, role)))
+        candidates.append((source, _extract_role_candidate(source, role, allow_title_fallback=False)))
 
     official = [
         (source, name)
@@ -3179,6 +3522,8 @@ def _current_fact_source_score(source, candidate, role):
         score += 1.0
     if any(marker in haystack for marker in ("was prime minister", "former prime minister", "between 25", "between 20", "former president")):
         score -= 3.0
+    if _is_generic_official_directory_source(source):
+        score -= 4.0
     return score
 
 
@@ -3195,7 +3540,7 @@ def _is_us_secretary_of_state_source(source) -> bool:
     )
 
 
-def _extract_role_candidate(source, role):
+def _extract_role_candidate(source, role, *, allow_title_fallback: bool = True):
     patterns = {
         "prime minister": (
             r"\bCurrent role holder\s+(?P<name>[^.]+?)\.",
@@ -3208,6 +3553,7 @@ def _extract_role_candidate(source, role):
             rf"\b(?P<name>{WEB_NAME_TOKEN}(?:\s+{WEB_NAME_TOKEN}){{1,5}})\s*,\s+(?:the\s+)?(?:current\s+)?President\b",
             rf"\b(?P<name>{WEB_NAME_TOKEN}(?:\s+{WEB_NAME_TOKEN}){{1,5}})\s+(?:is|has\s+been|serves\s+as|has\s+served\s+as)\s+(?:the\s+)?(?:current\s+)?President\b",
             rf"\b(?P<name>{WEB_NAME_TOKEN}(?:\s+{WEB_NAME_TOKEN}){{1,5}})\s+is\s+the\s+\d+(?:st|nd|rd|th)\s+and\s+\d+(?:st|nd|rd|th)\s+President\b",
+            rf"\b(?P<name>{WEB_NAME_TOKEN}(?:\s+{WEB_NAME_TOKEN}){{1,5}})\s+is\s+the\s+[^.]{0,40}?\bcurrent\s+president(?:\s+of\s+{WEB_NAME_TOKEN}(?:\s+{WEB_NAME_TOKEN}){{0,5}})?\b",
         ),
         "secretary of state": (
             r"\bSecretary\s+of\s+State\s+(?P<name>[A-Z][A-Za-z.\-]+(?:\s+[A-Z][A-Za-z.\-]+){0,5})\b",
@@ -3221,30 +3567,91 @@ def _extract_role_candidate(source, role):
             r"\b(?P<name>[A-Z][A-Za-z.\-]+(?:\s+[A-Z][A-Za-z.\-]+){0,4})\s+is\s+(?:the\s+)?King\b",
         ),
     }
-    for text in (source.content or "", source.title or ""):
+    candidates: list[tuple[str, bool]] = []
+    for text, from_title in ((source.content or "", False), (source.title or "", True)):
         for pattern in patterns.get(role, ()):
             match = re.search(pattern, text)
             if not match:
                 continue
             candidate = _clean_person_name(match.group("name"))
             if _looks_like_person_name(candidate):
-                return candidate
+                candidates.append((candidate, from_title))
+
+    if candidates:
+        best_candidate, _from_title = max(
+            candidates,
+            key=lambda item: _role_candidate_quality(item[0], from_title=item[1]),
+        )
+        return best_candidate
+
+    if not allow_title_fallback:
+        return ""
 
     title_head = re.split(r"\s+\|\s+|\s+-\s+", source.title or "", maxsplit=1)[0]
     candidate = _clean_person_name(title_head)
     if re.fullmatch(r"[A-Z][A-Z\-']+\s+[A-Z][a-z\-']+", candidate):
         surname, given = candidate.split(" ", 1)
         candidate = f"{given} {surname.title()}"
-    if _looks_like_person_name(candidate):
+    if _looks_like_person_name(candidate) and _role_title_fallback_allowed(source, role):
         return candidate
     return ""
 
 
+def _role_candidate_quality(candidate: str, *, from_title: bool) -> tuple[float, float]:
+    words = [word for word in re.split(r"\s+", candidate.strip()) if word]
+    score = float(len(words) * 2)
+    if from_title:
+        score += 1.0
+    if len(words) == 1:
+        score -= 1.5
+    if any(char == "." for char in candidate):
+        score += 0.3
+    if candidate.endswith(("'s", "’s")):
+        score -= 1.0
+    return score, float(len(candidate))
+
+
+def _role_title_fallback_allowed(source, role: str) -> bool:
+    title = (source.title or "").lower().strip()
+    if not title:
+        return False
+    blocked_markers = (
+        "breaking news",
+        "latest updates",
+        "ap news",
+        "politico",
+        "reuters",
+        "bbc",
+        "news",
+        "elected officials",
+        "about the u.s.",
+        "about the us",
+    )
+    if any(marker in title for marker in blocked_markers):
+        return False
+    role_prefixes = {
+        "president": ("president ", "the president "),
+        "prime minister": ("prime minister ", "the prime minister "),
+        "secretary of state": ("secretary of state ", "the secretary of state "),
+        "king": ("king ", "the king "),
+    }
+    return title.startswith(role_prefixes.get(role, ()))
+
+
 def _clean_person_name(value):
     text = (value or "").strip()
-    text = re.sub(r"^(?:the\s+)?(?:(?:rt\s+hon|hon|sir|dr|mr|mrs|ms)\s+)+", "", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"^(?:the\s+)?(?:(?:rt\.?\s+hon\.?|hon\.?|sir|dr|mr|mrs|ms|"
+        r"prof\.?|professor|h\.?\s*e\.?|his\s+excellency|her\s+excellency|"
+        r"his\s+majesty|her\s+majesty|hrh|h\.?r\.?h\.?)\s+)+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
     text = re.sub(r"^(?:president|prime minister|secretary of state|king|queen)\s+", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(?:KCB|KC|MP|PC|OBE|CBE|Jr\.?|Sr\.?)\b", "", text)
+    text = re.split(r"(?<=[a-z])\.\s+(?=[A-Z])", text, maxsplit=1)[-1]
+    text = re.sub(r"(['’])s$", "", text, flags=re.IGNORECASE)
     text = _trim_person_name_at_boundary(text)
     text = re.sub(r"\s+", " ", text).strip(" ,.-")
     text = _normalize_person_name_case(text)
@@ -3259,6 +3666,12 @@ def _looks_like_person_name(value):
         return False
     words = [word for word in re.split(r"\s+", text) if word]
     if not 1 <= len(words) <= 5:
+        return False
+    if any(
+        word.lower().strip("'’.,;:!?()[]{}")
+        in {"find", "contact", "elected", "officials", "breaking", "latest", "updates", "news"}
+        for word in words
+    ):
         return False
     if _person_name_has_boundary_term(text):
         return False
@@ -3296,6 +3709,7 @@ def _looks_like_person_name_org_acronym(token: str) -> bool:
     cleaned = token.strip(" ,.;:()[]{}")
     return (
         bool(re.fullmatch(r"[A-Z][A-Z0-9&./-]{1,}", cleaned))
+        and not re.fullmatch(r"[A-Z]{4,}", cleaned)
         and cleaned.lower() not in PERSON_NAME_SUFFIXES
     )
 
@@ -3747,7 +4161,7 @@ def _office_start_role_candidate(question: str, web_sources: Sequence[WebSource]
         if candidate:
             return candidate
     for source in web_sources:
-        candidate = _extract_role_candidate(source, context["role"])
+        candidate = _extract_role_candidate(source, context["role"], allow_title_fallback=False)
         if candidate:
             return candidate
     return ""
@@ -4344,10 +4758,22 @@ def _verify_citations(answer, local_sources, web_sources):
         return cleaned
     if _looks_like_non_answer(cleaned):
         return cleaned
+    if _answer_declares_ai_knowledge(cleaned):
+        return cleaned
     citation = _best_missing_citation(cleaned, local_sources, web_sources)
     if not citation:
         return cleaned
     return _append_citation_to_answer(cleaned, citation)
+
+
+def _answer_declares_ai_knowledge(answer: str) -> bool:
+    return bool(
+        re.search(
+            r"\bsource:\s*(?:model|ai) knowledge(?:\s*\([^)]*\))?\s*$",
+            answer or "",
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _best_missing_citation(answer, local_sources, web_sources):
@@ -4427,6 +4853,15 @@ def _verify_answer_against_evidence(
 
 def _remove_citation_text(answer: str) -> str:
     return re.sub(r"\[[SW]\d+\]", " ", answer or "", flags=re.IGNORECASE)
+
+
+def _strip_model_knowledge_footer(answer: str) -> str:
+    return re.sub(
+        r"\n+\s*Source:\s*(?:model|ai) knowledge(?:\s*\([^)]*\))?\s*$",
+        "",
+        answer or "",
+        flags=re.IGNORECASE,
+    ).strip()
 
 
 def _looks_like_non_answer(answer):

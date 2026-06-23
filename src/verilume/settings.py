@@ -259,6 +259,11 @@ def normalize_generation_backend(backend: str) -> str:
     return GENERATION_BACKEND_ALIASES.get(key, "huggingface")
 
 
+def normalize_hf_provider(provider: str) -> str:
+    key = provider.strip().lower().replace("_", "-").replace(" ", "-")
+    return key or "auto"
+
+
 def normalize_web_search_provider(provider: str) -> str:
     key = provider.strip().lower().replace("-", "_").replace(" ", "_")
     return WEB_SEARCH_PROVIDER_ALIASES.get(
@@ -526,6 +531,12 @@ class AppSettings:
             self,
             "generation_backend",
             normalize_generation_backend(str(self.generation_backend)),
+        )
+
+        object.__setattr__(
+            self,
+            "hf_provider",
+            normalize_hf_provider(str(self.hf_provider)),
         )
 
         object.__setattr__(

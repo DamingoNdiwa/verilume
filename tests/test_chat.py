@@ -162,8 +162,8 @@ class ChatInteractionTests(unittest.TestCase):
 
         rendered = _display_answer(response)
 
-        self.assertIn("Government", rendered)
-        self.assertNotIn("[W1]", rendered)
+        self.assertIn("Luc Frieden is prime minister", rendered)
+        self.assertIn("[W1]", rendered)
 
     def test_display_answer_replaces_ai_source_footer_with_origin_badge(self) -> None:
         response = RAGResponse(
@@ -177,7 +177,7 @@ class ChatInteractionTests(unittest.TestCase):
         self.assertEqual(_display_answer(response), "Churn prediction estimates customer churn.")
         self.assertEqual(
             _answer_origin(response),
-            ("\U0001f9e0 AI Knowledge", "Medium", "Not externally verified"),
+            ("\U0001f9e0 AI Knowledge", "Medium", "AI knowledge"),
         )
 
     def test_answer_origin_uses_na_confidence_for_conversation(self) -> None:
@@ -204,7 +204,7 @@ class ChatInteractionTests(unittest.TestCase):
 
         self.assertEqual(
             _answer_origin(response),
-            ("\U0001f9e0 AI Knowledge", "Medium", "Not externally verified"),
+            ("\U0001f9e0 AI Knowledge", "Medium", "AI knowledge"),
         )
 
     def test_answer_origin_uses_current_information_for_time_sensitive_web_answer(self) -> None:
@@ -225,7 +225,7 @@ class ChatInteractionTests(unittest.TestCase):
 
         self.assertEqual(
             _answer_origin(response),
-            ("\U0001f310 Current Information", "High", "Recent web evidence"),
+            ("\U0001f310 Current Information", "High", "Web"),
         )
 
     def test_answer_origin_uses_allowed_label_for_unverified_current_answer(self) -> None:
@@ -284,9 +284,39 @@ class ChatInteractionTests(unittest.TestCase):
 
         self.assertEqual(
             _answer_origin(response),
-            ("\U0001f500 Hybrid", "High", "Document + University + AI synthesis"),
+            ("\U0001f500 Hybrid", "High", "Hybrid"),
         )
         self.assertEqual(_supporting_source_count(response), 2)
+
+    def test_answer_origin_prefers_actual_diagnostics_over_local_sufficient_flag(self) -> None:
+        response = RAGResponse(
+            answer="Spectral analysis decomposes a signal into its component frequencies.",
+            local_sources=[
+                LocalSource(
+                    label="S1",
+                    document="notes.pdf",
+                    page=3,
+                    chunk_id="chunk",
+                    text="A local note exists but was not cited.",
+                    score=0.88,
+                )
+            ],
+            web_sources=[],
+            used_web=False,
+            confidence="model-only",
+            diagnostics={
+                "local_sufficient": True,
+                "used_local": False,
+                "used_model_knowledge": True,
+                "used_web": False,
+                "evidence_winner": "model_knowledge",
+            },
+        )
+
+        self.assertEqual(
+            _answer_origin(response),
+            ("\U0001f9e0 AI Knowledge", "Medium", "AI knowledge"),
+        )
 
     def test_answer_origin_uses_local_retrieval_for_local_grounded_answer_without_citations(
         self,

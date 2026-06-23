@@ -8,7 +8,7 @@ from typing import Any
 
 import streamlit as st
 
-from verilume.ingest import supported_extensions
+from verilume.ingest import removable_documents, supported_extensions
 from verilume.settings import (
     ANSWER_STYLE_CHOICES,
     DEFAULT_HF_MODEL_CHOICES,
@@ -25,6 +25,8 @@ class SidebarState:
     settings: AppSettings
     uploaded_files: list[Any]
     build_clicked: bool
+    remove_documents: list[str]
+    remove_clicked: bool
     reset_clicked: bool
 
 
@@ -38,6 +40,7 @@ def render_sidebar(
 
         uploaded_files: list[Any] = []
         build_clicked = False
+        remove_clicked = False
         reset_clicked = False
 
         overrides: dict[str, Any] = {}
@@ -154,14 +157,30 @@ def render_sidebar(
             with col_a:
                 build_clicked = st.button(
                     "Build KB",
-                    width="stretch",
+                    use_container_width=True,
                 )
 
             with col_b:
                 reset_clicked = st.button(
                     "Reset DB",
-                    width="stretch",
+                    use_container_width=True,
                 )
+
+            existing_documents = removable_documents(base_settings.docs_dir)
+            remove_documents_selected: list[str] = []
+            if existing_documents:
+                remove_documents_selected = st.multiselect(
+                    "Indexed documents",
+                    options=existing_documents,
+                    help="Remove selected documents from the local files and vector database.",
+                )
+                remove_clicked = st.button(
+                    "Remove selected",
+                    use_container_width=True,
+                    disabled=not remove_documents_selected,
+                )
+            else:
+                st.caption("No indexed documents available to remove.")
 
             st.caption("Library snapshot")
 
@@ -222,7 +241,7 @@ def render_sidebar(
 
         settings = base_settings.with_overrides(**overrides)
 
-        if st.button("Save settings", width="stretch"):
+        if st.button("Save settings", use_container_width=True):
             save_user_config(settings)
             st.success("Settings saved.")
             st.rerun()
@@ -231,6 +250,8 @@ def render_sidebar(
             settings=settings,
             uploaded_files=uploaded_files or [],
             build_clicked=build_clicked,
+            remove_documents=remove_documents_selected,
+            remove_clicked=remove_clicked,
             reset_clicked=reset_clicked,
         )
 

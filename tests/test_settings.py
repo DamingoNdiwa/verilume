@@ -42,6 +42,7 @@ class AppSettingsTests(unittest.TestCase):
             confidence_high_threshold=4,
             confidence_medium_threshold=-1,
             answer_style="academic",
+            hf_provider="   ",
         )
 
         self.assertIsInstance(settings.docs_dir, Path)
@@ -52,6 +53,7 @@ class AppSettingsTests(unittest.TestCase):
         self.assertEqual(settings.hf_max_new_tokens, 32)
         self.assertEqual(settings.hf_temperature, 0.0)
         self.assertEqual(settings.hf_timeout_seconds, 5.0)
+        self.assertEqual(settings.hf_provider, "auto")
         self.assertEqual(settings.web_search_provider, "brave")
         self.assertEqual(settings.web_search_max_results, 1)
         self.assertEqual(settings.web_search_timeout_seconds, 5.0)

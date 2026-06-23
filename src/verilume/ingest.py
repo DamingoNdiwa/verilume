@@ -8,10 +8,18 @@ import logging
 import os
 import re
 import shutil
+import tempfile
+import unicodedata
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
 
 from verilume.core.embeddings import EmbeddingService
 from verilume.core.retrieval import ChromaRetriever
@@ -19,6 +27,11 @@ from verilume.core.schemas import DocumentChunk, IngestResult
 from verilume.settings import AppSettings, ensure_app_dirs
 
 LOGGER = logging.getLogger(__name__)
+
+_PDF_PHONE_ICON_FRAGMENT_RE = re.compile(r"(?:(?<=^)|(?<=\|))\s*/[A-Za-z]{1,6}(?=\+\d)")
+_PDF_DELIMITED_ICON_FRAGMENT_RE = re.compile(
+    r"(?:(?<=^)|(?<=\|))\s*/(?!/)[^\s|]{1,12}(?=(?:\s*\||\s*$))"
+)
 
 ProgressCallback = Callable[[str, int, int], None]
 
@@ -78,12 +91,57 @@ class ReadonlyChromaError(RuntimeError):
     """Raised when Chroma's SQLite store rejects writes."""
 
 
+class IngestStateError(RuntimeError):
+    """Raised when ingestion would leave the knowledge base degraded."""
+
+
 def save_uploaded_file(file_name: str, data: bytes, docs_dir: Path) -> Path:
     docs_dir.mkdir(parents=True, exist_ok=True)
     clean_name = Path(file_name).name
     target = docs_dir / clean_name
     target.write_bytes(data)
     return target
+
+
+def removable_documents(docs_dir: Path) -> list[str]:
+    if not docs_dir.exists():
+        return []
+    return sorted(str(path.relative_to(docs_dir)) for path in supported_files(docs_dir))
+
+
+def remove_documents(settings: AppSettings, documents: list[str]) -> list[str]:
+    ensure_app_dirs(settings)
+    if not documents:
+        return []
+
+    with _ingest_lock(settings):
+        docs_dir = settings.docs_dir
+        docs_root = docs_dir.resolve()
+        manifest = load_manifest(settings.manifest_path)
+        ingestor = DocumentIngestor(settings)
+        removed: list[str] = []
+
+        for document in documents:
+            relative = Path(document)
+            raw_path = docs_dir / relative
+            path = raw_path.resolve()
+            if docs_root not in path.parents and path != docs_root:
+                continue
+
+            manifest.pop(str(raw_path), None)
+            manifest.pop(str(path), None)
+            ingestor.retriever.delete_document(str(raw_path))
+            if path != raw_path:
+                ingestor.retriever.delete_document(str(path))
+            try:
+                if path.exists():
+                    path.unlink()
+                removed.append(str(relative))
+            except OSError:
+                continue
+
+        write_manifest(settings.manifest_path, manifest)
+        return removed
 
 
 def supported_files(docs_dir: Path) -> list[Path]:
@@ -134,10 +192,35 @@ def _extract_pdf(path: Path) -> tuple[list[tuple[int | None, str]], int]:
     reader = PdfReader(str(path))
     pages: list[tuple[int | None, str]] = []
     for index, page in enumerate(reader.pages, start=1):
-        text = page.extract_text() or ""
+        text = _normalize_pdf_text(page.extract_text() or "")
         if text.strip():
             pages.append((index, text))
     return pages, len(reader.pages)
+
+
+def _normalize_pdf_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text or "")
+    normalized = normalized.replace("\u00ad", "")
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", normalized)
+    normalized = re.sub(r"(\w)-\n(?=\w)", r"\1", normalized)
+
+    cleaned_lines: list[str] = []
+    for raw_line in normalized.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if cleaned_lines and cleaned_lines[-1] != "":
+                cleaned_lines.append("")
+            continue
+        line = _PDF_PHONE_ICON_FRAGMENT_RE.sub(" ", line)
+        line = _PDF_DELIMITED_ICON_FRAGMENT_RE.sub(" ", line)
+        line = re.sub(r"\s*\|\s*", " | ", line)
+        line = re.sub(r"(?:\s\|\s){2,}", " | ", line)
+        line = re.sub(r"\s{2,}", " ", line).strip(" |")
+        if line:
+            cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines).strip()
 
 
 def _extract_docx(path: Path) -> tuple[list[tuple[int | None, str]], int]:
@@ -439,11 +522,14 @@ class DocumentIngestor:
             cache_dir=settings.embedding_cache_dir,
             cache_enabled=settings.embedding_cache_enabled,
         )
-        self.retriever = ChromaRetriever(
-            settings.chroma_dir,
-            settings.collection_name,
+        self.retriever = self._create_retriever()
+
+    def _create_retriever(self) -> ChromaRetriever:
+        return ChromaRetriever(
+            self.settings.chroma_dir,
+            self.settings.collection_name,
             self.embeddings,
-            settings=settings,
+            settings=self.settings,
         )
 
     def ingest(
@@ -452,16 +538,51 @@ class DocumentIngestor:
         progress: ProgressCallback | None = None,
     ) -> IngestResult:
         reset = self.settings.reset_db if reset is None else reset
+        ensure_app_dirs(self.settings)
+        with _ingest_lock(self.settings):
+            backup = self._create_backup_snapshot()
+            try:
+                if progress and reset:
+                    progress("Preparing staged rebuild", 0, 1)
+                result = self._ingest_staged(progress=progress)
+                if progress and reset:
+                    progress("Preparing staged rebuild", 1, 1)
+
+                rollback_reason = self._rollback_reason(result, backup)
+                if rollback_reason:
+                    raise IngestStateError(
+                        "Ingestion rolled back because it would leave the knowledge base degraded "
+                        f"({rollback_reason})."
+                    )
+                return result
+            except Exception:
+                self._restore_backup_snapshot(backup)
+                raise
+            finally:
+                self._cleanup_backup_snapshot(backup)
+
+    def _ingest_staged(self, progress: ProgressCallback | None) -> IngestResult:
+        staging_root = Path(tempfile.mkdtemp(prefix="verilume-staging-"))
+        staged_chroma = staging_root / "chroma_db"
+        staged_manifest = staging_root / "ingestion_manifest.json"
+        staged_settings = self.settings.with_overrides(
+            chroma_dir=staged_chroma,
+            manifest_path=staged_manifest,
+            reset_db=False,
+        )
+        staged = DocumentIngestor(staged_settings)
+        staged.embeddings = self.embeddings
+        staged.retriever = staged._create_retriever()
+
         try:
-            return self._ingest_once(reset=reset, progress=progress, force_all=False)
-        except ReadonlyChromaError:
-            LOGGER.warning("Chroma reported a readonly database; rebuilding and retrying once.")
-            if progress:
-                progress("Repairing Chroma database", 0, 1)
-            self._reset()
-            if progress:
-                progress("Repairing Chroma database", 1, 1)
-            return self._ingest_once(reset=False, progress=progress, force_all=True)
+            result = staged._ingest_once(reset=False, progress=progress, force_all=True)
+            if result.errors:
+                preview = "; ".join(result.errors[:3])
+                raise IngestStateError(f"Staged ingestion failed: {preview}")
+            self._install_staged_snapshot(staged_chroma=staged_chroma, staged_manifest=staged_manifest)
+            return result
+        finally:
+            shutil.rmtree(staging_root, ignore_errors=True)
 
     def _ingest_once(
         self,
@@ -580,7 +701,6 @@ class DocumentIngestor:
         return indexed
 
     def _reset(self) -> None:
-        self.retriever.reconnect()
         if self.settings.manifest_path.exists():
             self.settings.manifest_path.unlink()
         if self.settings.chroma_dir.exists():
@@ -588,7 +708,7 @@ class DocumentIngestor:
             shutil.rmtree(self.settings.chroma_dir, ignore_errors=True)
         self.settings.chroma_dir.mkdir(parents=True, exist_ok=True)
         _make_tree_writable(self.settings.chroma_dir)
-        self.retriever.reconnect()
+        self.retriever = self._create_retriever()
         self.retriever.reset()
 
     def _remove_missing_documents(self, manifest: dict[str, dict]) -> None:
@@ -596,6 +716,84 @@ class DocumentIngestor:
         for stored_path in missing_paths:
             self.retriever.delete_document(stored_path)
             manifest.pop(stored_path, None)
+
+    def _create_backup_snapshot(self) -> dict[str, object]:
+        root = Path(tempfile.mkdtemp(prefix="verilume-ingest-backup-"))
+        chroma_backup = root / "chroma_db"
+        manifest_backup = root / "ingestion_manifest.json"
+
+        if self.settings.chroma_dir.exists():
+            shutil.copytree(self.settings.chroma_dir, chroma_backup, dirs_exist_ok=True)
+        if self.settings.manifest_path.exists():
+            shutil.copy2(self.settings.manifest_path, manifest_backup)
+
+        return {
+            "root": root,
+            "chroma_dir": chroma_backup,
+            "manifest_path": manifest_backup,
+            "previous_count": self.retriever.count(),
+        }
+
+    def _restore_backup_snapshot(self, backup: dict[str, object]) -> None:
+        root = Path(str(backup["root"]))
+        chroma_backup = Path(str(backup["chroma_dir"]))
+        manifest_backup = Path(str(backup["manifest_path"]))
+
+        if self.settings.chroma_dir.exists():
+            _make_tree_writable(self.settings.chroma_dir)
+            shutil.rmtree(self.settings.chroma_dir, ignore_errors=True)
+        if chroma_backup.exists():
+            shutil.copytree(chroma_backup, self.settings.chroma_dir, dirs_exist_ok=True)
+        else:
+            self.settings.chroma_dir.mkdir(parents=True, exist_ok=True)
+
+        if manifest_backup.exists():
+            shutil.copy2(manifest_backup, self.settings.manifest_path)
+        elif self.settings.manifest_path.exists():
+            self.settings.manifest_path.unlink()
+        self.retriever = self._create_retriever()
+
+    def _install_staged_snapshot(self, *, staged_chroma: Path, staged_manifest: Path) -> None:
+        if self.settings.chroma_dir.exists():
+            _make_tree_writable(self.settings.chroma_dir)
+            shutil.rmtree(self.settings.chroma_dir, ignore_errors=True)
+        if staged_chroma.exists():
+            shutil.copytree(staged_chroma, self.settings.chroma_dir, dirs_exist_ok=True)
+        else:
+            self.settings.chroma_dir.mkdir(parents=True, exist_ok=True)
+
+        if staged_manifest.exists():
+            self.settings.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(staged_manifest, self.settings.manifest_path)
+        elif self.settings.manifest_path.exists():
+            self.settings.manifest_path.unlink()
+        self.retriever = self._create_retriever()
+
+    def _cleanup_backup_snapshot(self, backup: dict[str, object]) -> None:
+        shutil.rmtree(Path(str(backup["root"])), ignore_errors=True)
+
+    def _rollback_reason(self, result: IngestResult, backup: dict[str, object]) -> str | None:
+        current_count = self.retriever.count()
+        previous_count = int(backup.get("previous_count", 0) or 0)
+        if result.chunks_indexed > 0 and current_count == 0:
+            return "retriever is empty after indexing"
+        if result.errors and previous_count > 0 and current_count < max(1, previous_count // 2):
+            return "retriever lost most indexed chunks after errors"
+        return None
+
+
+@contextmanager
+def _ingest_lock(settings: AppSettings):
+    lock_path = settings.chroma_dir.parent / ".verilume-ingest.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w", encoding="utf-8") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _metadata(chunk: DocumentChunk) -> dict:

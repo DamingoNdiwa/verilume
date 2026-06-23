@@ -799,6 +799,7 @@ def _enforce_source_policy(result: InterpretedQuery) -> InterpretedQuery:
     normalized = normalize_intent_text(question)
     explicit_web_request = _web_requested(normalized)
     current_web_required = _requires_current_web_sources(question, result.intent)
+    web_for_non_chat_queries = result.intent not in {"clarification", "local_document"}
 
     if result.needs_clarification or result.intent == "clarification":
         result.use_local = False
@@ -810,14 +811,20 @@ def _enforce_source_policy(result: InterpretedQuery) -> InterpretedQuery:
         result.use_model_knowledge = False
     else:
         result.use_local = True
-        result.use_web = explicit_web_request or current_web_required
+        result.use_web = bool(
+            web_for_non_chat_queries
+            or explicit_web_request
+            or current_web_required
+            or result.use_web
+        )
         result.use_model_knowledge = True
 
     result.diagnostics = {
         **dict(result.diagnostics or {}),
-        "source_policy": "local_first_model_then_web",
+        "source_policy": "local_first_model_then_web_ranking",
         "source_policy_explicit_web": explicit_web_request,
         "source_policy_current_web": current_web_required,
+        "source_policy_web_for_non_chat_queries": web_for_non_chat_queries,
     }
     return result
 

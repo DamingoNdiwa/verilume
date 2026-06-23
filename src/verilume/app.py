@@ -6,7 +6,7 @@ import logging
 
 import streamlit as st
 
-from verilume.ingest import DocumentIngestor, save_uploaded_file
+from verilume.ingest import DocumentIngestor, remove_documents, save_uploaded_file
 from verilume.rag import get_rag_service
 from verilume.settings import AppSettings, ensure_app_dirs
 from verilume.ui.chat import render_chat
@@ -38,6 +38,7 @@ def main() -> None:
     stats = _collect_document_stats_cached(base_settings)
     sidebar = render_sidebar(base_settings, stats)
     _clear_rag_cache_if_settings_changed(sidebar.settings)
+    _handle_document_removal(sidebar)
     _handle_ingestion(sidebar)
 
     stats = _collect_document_stats_cached(sidebar.settings)
@@ -95,6 +96,26 @@ def _handle_ingestion(sidebar: SidebarState) -> None:
                 "The knowledge base build failed. Please check the terminal logs and try again."
             )
             status.update(label="Knowledge base build failed", state="error")
+
+
+def _handle_document_removal(sidebar: SidebarState) -> None:
+    if not sidebar.remove_clicked or not sidebar.remove_documents:
+        return
+
+    with st.status("Removing selected documents", expanded=True) as status:
+        try:
+            removed = remove_documents(sidebar.settings, sidebar.remove_documents)
+            get_rag_service.cache_clear()
+            _collect_document_stats_cached.clear()
+            if removed:
+                st.write(f"Removed {len(removed)} document(s): {', '.join(removed)}")
+            else:
+                st.warning("No selected documents could be removed.")
+            status.update(label="Document removal complete", state="complete")
+        except Exception:
+            LOGGER.exception("Document removal failed.")
+            st.error("Removing selected documents failed. Please check the terminal logs and try again.")
+            status.update(label="Document removal failed", state="error")
 
 
 def _clear_rag_cache_if_settings_changed(settings: AppSettings) -> None:

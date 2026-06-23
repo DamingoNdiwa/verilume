@@ -8,9 +8,9 @@ import re
 from datetime import datetime, timedelta
 from html import escape
 from typing import Any
-from urllib.parse import quote
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from verilume.core.conversation_state import ConversationState
 from verilume.core.schemas import ChatMessage, RAGResponse
@@ -20,7 +20,6 @@ from verilume.utils.exporting import chat_to_markdown, chat_to_pdf
 from verilume.utils.formatting import (
     local_source_confidence,
     local_source_rows,
-    source_badge,
     source_confidence,
     web_source_rows,
     web_source_type,
@@ -149,7 +148,7 @@ def _render_toolbar(settings: AppSettings) -> None:
     can_regenerate = _latest_user_index(st.session_state.messages) is not None
     col_a, col_b, col_c, col_d, col_e = st.columns([1.1, 1.2, 0.8, 1, 2])
     with col_a:
-        if st.button("\u23f9 Stop response", width="stretch"):
+        if st.button("\u23f9 Stop response", use_container_width=True):
             st.session_state.stop_requested = True
             if st.session_state.generating:
                 st.warning("Stop requested. The current provider call will finish this turn.")
@@ -157,12 +156,12 @@ def _render_toolbar(settings: AppSettings) -> None:
         if st.button(
             "Regenerate response",
             disabled=st.session_state.generating or not can_regenerate,
-            width="stretch",
+            use_container_width=True,
         ):
             st.session_state.regenerate_requested = True
             st.rerun()
     with col_c:
-        if st.button("Clear", width="stretch"):
+        if st.button("Clear", use_container_width=True):
             st.session_state.messages = []
             st.session_state.conversation_state = ConversationState()
             st.rerun()
@@ -173,7 +172,7 @@ def _render_toolbar(settings: AppSettings) -> None:
             data=markdown,
             file_name="verilume-chat.md",
             mime="text/markdown",
-            width="stretch",
+            use_container_width=True,
         )
     with col_e:
         try:
@@ -183,7 +182,7 @@ def _render_toolbar(settings: AppSettings) -> None:
                 data=pdf,
                 file_name="verilume-chat.pdf",
                 mime="application/pdf",
-                width="stretch",
+                use_container_width=True,
             )
         except Exception:
             st.download_button(
@@ -191,7 +190,7 @@ def _render_toolbar(settings: AppSettings) -> None:
                 data=b"",
                 file_name="verilume-chat.pdf",
                 disabled=True,
-                width="stretch",
+                use_container_width=True,
             )
 
 
@@ -377,7 +376,11 @@ def _friendly_token(value: str) -> str:
 
 
 def _render_local_sources_table(response: RAGResponse) -> None:
-    st.dataframe(local_source_rows(response.local_sources), width="stretch", hide_index=True)
+    st.dataframe(
+        local_source_rows(response.local_sources),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 def _render_web_source_groups(response: RAGResponse) -> None:
@@ -474,11 +477,10 @@ def _friendly_evidence_note(value: Any) -> str:
 
 
 def _answer_origin(response: RAGResponse) -> tuple[str, str, str]:
-    uses_local = _uses_local_retrieval(response)
-    uses_web = _uses_web_search(response)
-    if uses_local and uses_web:
-        return "\U0001f500 Hybrid", _hybrid_confidence(response), _hybrid_source_type(response)
-    if uses_local:
+    used_local, used_model, used_web = _response_evidence_usage(response)
+    if sum(1 for enabled in (used_local, used_model, used_web) if enabled) >= 2:
+        return "\U0001f500 Hybrid", _hybrid_confidence(response, used_model=used_model), "Hybrid"
+    if used_local:
         return (
             "\U0001f4c4 Local Retrieval",
             local_source_confidence(response.local_sources),
@@ -486,37 +488,25 @@ def _answer_origin(response: RAGResponse) -> tuple[str, str, str]:
         )
     if response.diagnostics.get("local_file_question"):
         return "\U0001f4c4 Local Retrieval", "Low", "Document metadata"
-    if response.confidence == "current-information" and response.web_sources:
+    if response.confidence == "current-information" and used_web and response.web_sources:
         return (
             "\U0001f310 Current Information",
             source_confidence(response.web_sources[0]),
-            "Recent web evidence",
+            "Web",
         )
-    if uses_web and response.web_sources:
-        source_type = web_source_type(response.web_sources[0])
-        return "\U0001f310 Web Search", source_confidence(response.web_sources[0]), source_type
+    if used_web and response.web_sources:
+        return "\U0001f310 Web Search", source_confidence(response.web_sources[0]), "Web"
     if response.confidence == "low":
         if response.diagnostics.get("time_sensitive"):
             return "\U0001f310 Current Information", "Low", "Not verified"
         return "\U0001f9e0 AI Knowledge", "Low", "Insufficient evidence"
     if _is_conversational_response(response.answer):
         return "\U0001f9e0 AI Knowledge", "N/A", "Conversation"
-    return "\U0001f9e0 AI Knowledge", "Medium", "Not externally verified"
+    return "\U0001f9e0 AI Knowledge", "Medium", "AI knowledge"
 
 
 def _display_answer(response: RAGResponse) -> str:
-    answer = _strip_trailing_model_source(response.answer)
-    labels: dict[str, str] = {}
-    for source in response.web_sources:
-        labels[source.label] = source_badge(web_source_type(source))
-    for source in response.local_sources:
-        labels[source.label] = source_badge("Local document")
-
-    def replace(match: re.Match[str]) -> str:
-        label = match.group(1)
-        return f"**{labels[label]}**" if label in labels else match.group(0)
-
-    return re.sub(r"\[([SW]\d+)\]", replace, answer)
+    return _strip_trailing_model_source(response.answer)
 
 
 def _strip_trailing_model_source(answer: str) -> str:
@@ -529,21 +519,23 @@ def _strip_trailing_model_source(answer: str) -> str:
 
 
 def _uses_local_retrieval(response: RAGResponse) -> bool:
-    return (
-        bool(response.local_sources)
-        or response.confidence in {"local-grounded", "local-web-assisted"}
-        or bool(response.diagnostics.get("local_sufficient"))
-    )
+    used_local, _, _ = _response_evidence_usage(response)
+    return used_local
 
 
 def _uses_web_search(response: RAGResponse) -> bool:
-    return bool(response.used_web or response.web_sources)
+    _, _, used_web = _response_evidence_usage(response)
+    return used_web
 
 
-def _hybrid_confidence(response: RAGResponse) -> str:
-    values = [local_source_confidence(response.local_sources)]
-    if response.web_sources:
+def _hybrid_confidence(response: RAGResponse, *, used_model: bool) -> str:
+    values: list[str] = []
+    if _uses_local_retrieval(response):
+        values.append(local_source_confidence(response.local_sources))
+    if _uses_web_search(response) and response.web_sources:
         values.append(source_confidence(response.web_sources[0]))
+    if used_model:
+        values.append("Medium")
     if "High" in values:
         return "High"
     if "Medium" in values:
@@ -551,12 +543,28 @@ def _hybrid_confidence(response: RAGResponse) -> str:
     return "Low"
 
 
-def _hybrid_source_type(response: RAGResponse) -> str:
-    values = ["Document"]
-    if response.web_sources:
-        values.append(web_source_type(response.web_sources[0]))
-    values.append("AI synthesis")
-    return " + ".join(dict.fromkeys(values))
+def _response_evidence_usage(response: RAGResponse) -> tuple[bool, bool, bool]:
+    diagnostics = response.diagnostics or {}
+    used_local = bool(
+        diagnostics["used_local"]
+        if "used_local" in diagnostics
+        else (
+            bool(response.local_sources)
+            or response.confidence in {"local-grounded", "local-web-assisted"}
+            or bool(diagnostics.get("local_sufficient"))
+        )
+    )
+    used_model = bool(
+        diagnostics["used_model_knowledge"]
+        if "used_model_knowledge" in diagnostics
+        else (response.confidence == "model-only" and not used_local and not response.used_web)
+    )
+    used_web = bool(
+        diagnostics["used_web"]
+        if "used_web" in diagnostics
+        else (response.used_web or response.web_sources)
+    )
+    return used_local, used_model, used_web
 
 
 def _answer_origin_kind(origin: str) -> str:
@@ -572,14 +580,15 @@ def _answer_origin_kind(origin: str) -> str:
 
 
 def _supporting_source_count(response: RAGResponse) -> int:
-    local_count = len(response.local_sources)
+    local_count = len(response.local_sources) if _uses_local_retrieval(response) else 0
     if local_count == 0 and _uses_local_retrieval(response):
         diagnostic_count = response.diagnostics.get("local_count", 0)
         if isinstance(diagnostic_count, int) and diagnostic_count > 0:
             local_count = diagnostic_count
         else:
             local_count = 1
-    return local_count + len(response.web_sources)
+    web_count = len(response.web_sources) if _uses_web_search(response) else 0
+    return local_count + web_count
 
 
 def _is_conversational_response(answer: str) -> bool:
@@ -642,11 +651,7 @@ button.addEventListener("click", async () => {{
 }});
 </script>
         """
-    st.iframe(
-        f"data:text/html;charset=utf-8,{quote(html, safe='')}",
-        height=38,
-        width="stretch",
-    )
+    components.html(html, height=38, scrolling=False)
 
 
 def _render_message_history(settings: AppSettings) -> None:

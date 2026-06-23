@@ -14,6 +14,8 @@ from verilume.rag import (
     LOCAL_FILE_NOT_FOUND,
     GenerationStopped,
     VerilumeRAG,
+    _current_public_fact_evidence,
+    _dedupe_web_queries,
     _merge_web_sources,
     _rank_web_sources,
     _should_rewrite_query,
@@ -229,8 +231,34 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertFalse(result.used_web)
         self.assertEqual([source.label for source in result.local_sources], ["S1"])
         self.assertEqual(result.web_sources, [])
-        self.assertEqual(rag.generator.model_calls, [])
+        self.assertEqual(len(rag.generator.model_calls), 1)
+        self.assertIn(result.diagnostics["answer_verification_status"], {"verified", "partial"})
         self.assertEqual(rag.web_search.queries, [])
+
+    def test_local_answer_can_report_hybrid_evidence_when_model_corroborates(self) -> None:
+        local_source = LocalSource(
+            label="S1",
+            document="econometrics_note.pdf",
+            page=1,
+            chunk_id="econometrics-note",
+            text="Econometrics applies statistical methods to economic data. [S1]",
+            score=0.95,
+        )
+        rag = self._make_rag(
+            local_answer="Econometrics applies statistical methods to economic data. [S1]",
+            model_answer="Econometrics applies statistical methods to economic data.",
+            local_sources=[local_source],
+        )
+        rag.settings = AppSettings(hf_token="token", enable_web_search=False)
+
+        result = rag.ask("What is econometrics?")
+
+        self.assertFalse(result.used_web)
+        self.assertEqual(result.confidence, "local-grounded")
+        self.assertTrue(result.diagnostics["used_local"])
+        self.assertTrue(result.diagnostics["used_model_knowledge"])
+        self.assertEqual(result.diagnostics["evidence_winner"], "hybrid")
+        self.assertEqual(result.diagnostics["answer_verification_status"], "verified")
 
     def test_repeated_question_uses_response_cache(self) -> None:
         rag = self._make_rag(local_answer="Local answer [S1]")
@@ -339,7 +367,8 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertIn("Keir Starmer", result.diagnostics["web_queries"][0])
         self.assertFalse(result.diagnostics["local_retrieval_skipped"])
         self.assertGreater(len(rag.retriever.calls), 0)
-        self.assertEqual(rag.generator.model_calls, [])
+        self.assertEqual(len(rag.generator.model_calls), 1)
+        self.assertTrue(result.diagnostics["parallel_model_with_web"])
         self.assertEqual(rag.generator.final_calls, [])
         self.assertTrue(result.used_web)
         self.assertIn("Keir Starmer resigned", result.answer)
@@ -405,11 +434,8 @@ class RAGRoutingTests(unittest.TestCase):
         )
         self.assertFalse(result.diagnostics["local_retrieval_skipped"])
         self.assertGreater(len(rag.retriever.calls), 0)
-        self.assertEqual(rag.generator.model_calls, [])
-        self.assertEqual(
-            result.diagnostics["model_skipped"],
-            "current public office query uses web evidence first",
-        )
+        self.assertEqual(len(rag.generator.model_calls), 1)
+        self.assertTrue(result.diagnostics["parallel_model_with_web"])
 
     def test_country_memory_rewrites_age_at_presidency_followup(self) -> None:
         rag = self._make_rag(
@@ -445,11 +471,8 @@ class RAGRoutingTests(unittest.TestCase):
         )
         self.assertFalse(result.diagnostics["local_retrieval_skipped"])
         self.assertGreater(len(rag.retriever.calls), 0)
-        self.assertEqual(rag.generator.model_calls, [])
-        self.assertEqual(
-            result.diagnostics["model_skipped"],
-            "age-at-office query uses web evidence first",
-        )
+        self.assertEqual(len(rag.generator.model_calls), 1)
+        self.assertTrue(result.diagnostics["parallel_model_with_web"])
         self.assertIn("55 years old", result.answer)
         self.assertIn("[W1]", result.answer)
 
@@ -736,7 +759,7 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertEqual(result.diagnostics["search_plan_intent"], "scientific_definition")
         self.assertIn("arXiv", result.diagnostics["search_plan_preferred_sources"])
         self.assertTrue(result.diagnostics["search_plan_need_local"])
-        self.assertFalse(result.diagnostics["search_plan_need_web"])
+        self.assertTrue(result.diagnostics["search_plan_need_web"])
         self.assertIn("Markov Chain Monte Carlo arxiv paper", result.diagnostics["web_queries"])
 
     def test_bare_person_query_resets_government_memory_and_uses_person_plan(self) -> None:
@@ -816,7 +839,8 @@ class RAGRoutingTests(unittest.TestCase):
         )
         self.assertFalse(result.diagnostics["local_retrieval_skipped"])
         self.assertGreater(len(rag.retriever.calls), 0)
-        self.assertEqual(rag.generator.model_calls, [])
+        self.assertEqual(len(rag.generator.model_calls), 1)
+        self.assertTrue(result.diagnostics["parallel_model_with_web"])
 
     def test_country_memory_expands_source_followup(self) -> None:
         rag = self._make_rag(
@@ -980,6 +1004,37 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertEqual(rag.generator.model_calls, [])
         self.assertEqual(rag.web_search.queries, [])
 
+    def test_local_file_fact_question_answers_from_local_evidence_without_model_or_web(self) -> None:
+        certificate_source = LocalSource(
+            label="S1",
+            document="exam_payment_certificate_Sproochentest_2025.pdf",
+            page=1,
+            chunk_id="certificate",
+            text=(
+                "Luxembourg, le 30/01/2026. "
+                "Damian Mingo Ndiwago a regle le montant de 75 EUR en date du 12/10/2025 "
+                "en vue de la passation de l'examen Sproochentest Letzebuergesch, "
+                "session 2025-12-17-Me."
+            ),
+            score=0.96,
+        )
+        rag = self._make_rag(
+            local_answer=LOCAL_UNKNOWN,
+            model_answer="Model answer that should not be used.",
+            local_sources=[certificate_source],
+        )
+
+        result = rag.ask("What is the exam date on the Sproochentest exam payment certificate?")
+
+        self.assertEqual(result.confidence, "local-grounded")
+        self.assertFalse(result.used_web)
+        self.assertIn("2025-12-17", result.answer)
+        self.assertIn("[S1]", result.answer)
+        self.assertEqual([source.label for source in result.local_sources], ["S1"])
+        self.assertEqual(rag.generator.local_calls, [])
+        self.assertEqual(rag.generator.model_calls, [])
+        self.assertEqual(rag.web_search.queries, [])
+
     def test_local_gap_uses_model_and_web_when_web_is_enabled(self) -> None:
         rag = self._make_rag(
             local_answer=LOCAL_UNKNOWN,
@@ -988,11 +1043,11 @@ class RAGRoutingTests(unittest.TestCase):
         )
         result = rag.ask("What is econometrics?")
 
-        self.assertEqual(result.confidence, "model-only")
-        self.assertFalse(result.used_web)
-        self.assertIn("Econometrics applies statistical methods", result.answer)
-        self.assertEqual(rag.generator.final_calls, [])
-        self.assertEqual(result.web_sources, [])
+        self.assertEqual(result.confidence, "web-assisted")
+        self.assertTrue(result.used_web)
+        self.assertIn("Econometrics", result.answer)
+        self.assertEqual(len(rag.generator.model_calls), 1)
+        self.assertNotEqual(result.web_sources, [])
 
     def test_model_knowledge_and_web_search_run_in_parallel_after_local_gap(self) -> None:
         rag = self._make_rag(
@@ -1091,6 +1146,27 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertTrue(result.diagnostics["used_model_knowledge"])
         self.assertEqual(result.diagnostics["evidence_winner"], "model_knowledge")
 
+    def test_model_knowledge_answer_does_not_gain_local_citation_footer(self) -> None:
+        rag = self._make_rag(
+            local_answer=LOCAL_UNKNOWN,
+            model_answer=(
+                "Spectral analysis decomposes a signal into its constituent frequencies."
+            ),
+            local_sources=[LOCAL_SOURCE],
+            web_sources=[],
+        )
+
+        result = rag.ask("What is spectral analysis?")
+
+        self.assertEqual(result.confidence, "model-only")
+        self.assertIn("Source: AI knowledge (not externally verified)", result.answer)
+        self.assertNotIn("[S1]", result.answer)
+        self.assertEqual(result.local_sources, [])
+        self.assertFalse(result.used_web)
+        self.assertFalse(result.diagnostics["used_local"])
+        self.assertTrue(result.diagnostics["used_model_knowledge"])
+        self.assertEqual(result.diagnostics["evidence_winner"], "model_knowledge")
+
     def test_current_fact_without_web_does_not_fake_model_verification(self) -> None:
         rag = self._make_rag(
             local_answer=LOCAL_UNKNOWN,
@@ -1127,10 +1203,10 @@ class RAGRoutingTests(unittest.TestCase):
         result = rag.ask("Search the web about econometrics")
 
         self.assertTrue(result.used_web)
-        self.assertTrue(result.diagnostics["used_local"])
+        self.assertFalse(result.diagnostics["used_local"])
         self.assertFalse(result.diagnostics["used_model_knowledge"])
         self.assertTrue(result.diagnostics["used_web"])
-        self.assertIn("local", result.diagnostics["evidence_streams"])
+        self.assertNotIn("local", result.diagnostics["evidence_streams"])
         self.assertIn("web", result.diagnostics["evidence_streams"])
         self.assertEqual(result.diagnostics["evidence_winner"], "web")
 
@@ -1526,6 +1602,92 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertNotIn("[S1]", result.answer)
         self.assertNotIn("course notes", result.answer.lower())
 
+    def test_reversed_name_identity_lookup_can_fall_back_to_strong_local_profile_evidence(self) -> None:
+        local_profile = LocalSource(
+            label="S1",
+            document="Damian_mingo_cv.pdf",
+            page=1,
+            chunk_id="cv-profile",
+            text=(
+                "Damian Mingo Ndiwago. University of Luxembourg doctoral researcher in "
+                "computational statistics. Contact details and profile summary."
+            ),
+            score=0.97,
+        )
+        rag = self._make_rag(
+            local_answer=LOCAL_UNKNOWN,
+            model_answer=MODEL_UNKNOWN,
+            local_sources=[local_profile],
+            web_sources=[
+                WebSource(
+                    label="W1",
+                    title="Damian Mingo profile",
+                    url="https://example.com/damian-mingo",
+                    content="Damian Mingo has a university profile.",
+                )
+            ],
+        )
+
+        result = rag.ask("Mingo Damian")
+
+        self.assertFalse(result.used_web)
+        self.assertEqual([source.label for source in result.local_sources], ["S1"])
+        self.assertIn("Damian Mingo", result.answer)
+        self.assertIn("[S1]", result.answer)
+        self.assertEqual(len(rag.generator.model_calls), 1)
+        self.assertEqual(result.diagnostics["answer_verification_status"], "verified")
+
+    def test_identity_lookup_filters_same_name_web_outlier_by_context_cluster(self) -> None:
+        rag = self._make_rag(
+            local_answer=LOCAL_UNKNOWN,
+            model_answer=MODEL_UNKNOWN,
+            local_sources=[],
+            web_sources=[
+                WebSource(
+                    label="W1",
+                    title="Christophe LEY - FSTM",
+                    url="https://www.uni.lu/fstm-en/people/christophe-ley",
+                    content=(
+                        "Christophe Ley is Associate Professor in Mathematics at the University "
+                        "of Luxembourg with research in statistics."
+                    ),
+                ),
+                WebSource(
+                    label="W2",
+                    title="Christophe Ley – The Conversation",
+                    url="https://theconversation.com/profiles/christophe-ley-2436551",
+                    content=(
+                        "Christophe Ley is Associate Professor in Mathematics at the University "
+                        "of Luxembourg and writes about statistics."
+                    ),
+                ),
+                WebSource(
+                    label="W3",
+                    title="Christophe Ley",
+                    url="https://en.wikipedia.org/wiki/Christophe_Ley",
+                    content="Christophe Ley is a Luxembourgish statistician and author.",
+                ),
+                WebSource(
+                    label="W4",
+                    title="Christophe Ley | Department of Recreation, Parks & Tourism",
+                    url="https://rpt.sfsu.edu/christophe-ley",
+                    content=(
+                        "With more than 20 years of experience, Ley has worked with the San "
+                        "Francisco CVB and tourism conferences."
+                    ),
+                ),
+            ],
+        )
+
+        result = rag.ask("Christophe ley")
+
+        self.assertTrue(result.used_web)
+        self.assertIn("Luxembourgish statistician", result.answer)
+        self.assertNotIn("Recreation, Parks & Tourism", result.answer)
+        self.assertFalse(
+            any("Recreation, Parks & Tourism" in source.title for source in result.web_sources)
+        )
+
     def test_entity_lookup_uses_fast_extractive_synthesis(self) -> None:
         rag = self._make_rag(
             local_answer=LOCAL_UNKNOWN,
@@ -1669,9 +1831,9 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertEqual(result.confidence, "current-information")
         self.assertTrue(result.used_web)
         self.assertIn("Luc Frieden", result.answer)
-        self.assertEqual(
-            result.diagnostics["model_skipped"], "current public role uses web evidence first"
-        )
+        self.assertEqual(len(rag.generator.model_calls), 1)
+        self.assertTrue(result.diagnostics["parallel_model_with_web"])
+        self.assertFalse(result.diagnostics["used_model_knowledge"])
 
     def test_generic_country_president_query_continues_to_web_after_local_miss(self) -> None:
         rag = self._make_rag(
@@ -1734,6 +1896,40 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertIn("29 May 2023", result.answer)
         self.assertIn("[W1]", result.answer)
 
+    def test_current_country_president_strips_honorific_prefixes_from_web_evidence(self) -> None:
+        rag = self._make_rag(
+            local_answer=LOCAL_UNKNOWN,
+            model_answer=MODEL_UNKNOWN,
+            local_sources=[],
+            web_sources=[
+                WebSource(
+                    label="W1",
+                    title="National Government | Kenya Embassy Ankara Türkiye",
+                    url="https://kenyaembassy.org.tr/pages/15/National-Government",
+                    content=(
+                        "THE GOVERNMENT OF KENYA THE THREE ARMS OF GOVERNMENT. "
+                        "Office of the President HIS EXCELLENCY HON. WILLIAM SAMOEI RUTO, "
+                        "PhD., C.G.H. President of the Republic of Kenya and Commander-In-Chief "
+                        "of the Defence Forces."
+                    ),
+                ),
+                WebSource(
+                    label="W2",
+                    title="President of Kenya - Wikipedia",
+                    url="https://en.wikipedia.org/wiki/President_of_Kenya",
+                    content="William Samoei Ruto is the president of Kenya.",
+                ),
+            ],
+        )
+
+        result = rag.ask("Who is the current president of Kenya?")
+
+        self.assertEqual(result.confidence, "current-information")
+        self.assertTrue(result.used_web)
+        self.assertIn("William Samoei Ruto", result.answer)
+        self.assertNotIn("His Excellency [W1]", result.answer)
+        self.assertNotIn("His Excellency", result.answer)
+
     def test_prime_minister_query_recognizes_norway_country(self) -> None:
         rag = self._make_rag(
             local_answer=LOCAL_UNKNOWN,
@@ -1792,6 +1988,52 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertIn("[W1]", result.answer)
         self.assertNotIn("Joe Biden", result.answer)
         self.assertTrue(result.diagnostics["current_role_override"])
+
+    def test_current_public_fact_evidence_rejects_generic_directory_and_trims_headline_suffix(self) -> None:
+        web_sources = [
+            WebSource(
+                label="W1",
+                title="Fact Sheets - The White House",
+                url="https://www.whitehouse.gov/fact-sheets/",
+                content="President Donald J. Trump Updates Tariffs after the latest review.",
+            ),
+            WebSource(
+                label="W2",
+                title="Find and contact elected officials - USAGov",
+                url="https://www.usa.gov/elected-officials",
+                content="Find the names and current activities of state and territorial legislators.",
+            ),
+            WebSource(
+                label="W3",
+                title="Donald Trump | Breaking News & Latest Updates | AP News",
+                url="https://apnews.com/hub/donald-trump",
+                content="Stay informed and read the latest breaking news and updates on Donald Trump.",
+            ),
+        ]
+
+        evidence = _current_public_fact_evidence("Who is the current president of the USA?", web_sources)
+
+        self.assertEqual(
+            [(source.label, candidate) for source, candidate in evidence],
+            [("W1", "Donald J. Trump")],
+        )
+
+    def test_dedupe_web_queries_extracts_query_from_stringified_dict(self) -> None:
+        queries = [
+            "{'query': 'current president of the USA', 'source': 'local', 'local_search': True}",
+            "{'query': 'current president of the USA', 'source': 'model knowledge'}",
+            "current president of the USA official government",
+        ]
+
+        deduped = _dedupe_web_queries(queries)
+
+        self.assertEqual(
+            deduped,
+            [
+                "current president of the USA",
+                "current president of the USA official government",
+            ],
+        )
 
     def test_usa_king_question_corrects_role_and_uses_president_evidence(self) -> None:
         rag = self._make_rag(
@@ -1880,7 +2122,7 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertNotIn("Rishi Sunak", result.answer)
         self.assertNotIn("Evidence conflict detected", result.answer)
         self.assertTrue(result.diagnostics["current_role_override"])
-        self.assertTrue(result.diagnostics["evidence_conflict"])
+        self.assertFalse(result.diagnostics["evidence_conflict"])
         self.assertEqual(
             result.web_sources[0].url,
             "https://www.gov.uk/government/ministers/prime-minister",

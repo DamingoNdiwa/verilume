@@ -32,7 +32,7 @@ def test_unspecified_country_president_uses_active_country() -> None:
     assert result.use_model_knowledge
 
 
-def test_smallest_country_query_uses_local_and_model_before_web() -> None:
+def test_smallest_country_query_uses_local_model_and_web() -> None:
     result = QueryInterpretationAgent().interpret(
         "The smallest country in Europe",
         [],
@@ -40,7 +40,7 @@ def test_smallest_country_query_uses_local_and_model_before_web() -> None:
     )
 
     assert result.intent == "public_knowledge"
-    assert not result.use_web
+    assert result.use_web
     assert result.use_local
     assert result.use_model_knowledge
     assert any("smallest country in Europe" in query for query in result.search_queries)
