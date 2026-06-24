@@ -149,8 +149,11 @@ PERSON_NAME_SUFFIXES = {"ii", "iii", "iv", "jr", "sr"}
 INSUFFICIENT_MARKERS = (
     "web_search_needed", LOCAL_UNKNOWN.lower(), MODEL_UNKNOWN.lower(), "i don't know",
     "i do not know", "cannot answer", "can't answer", "could not answer", "could not verify",
-    "not enough information", "insufficient information", "insufficient context",
+    "could not find", "couldn't find", "couldn’t find", "could not locate",
+    "couldn't locate", "couldn’t locate", "not enough information", "insufficient information",
+    "insufficient context", "no specific information", "no information about",
     "unable to determine", "not provided in the context", "not in the local",
+    "without more context", "without more information",
 )
 WEB_REQUEST_MARKERS = (
     "search web", "search the web", "web search", "use web", "use the web", "look up",
@@ -503,7 +506,7 @@ class VerilumeRAG:
         on_stage: Callable[[str], None] | None = None,
     ) -> RAGResponse:
         history = history or []
-        cache_key = _response_cache_key(question, history, conversation_state)
+        cache_key = _response_cache_key(question, history, conversation_state, self.settings)
         if should_stop is None:
             cached = self._cached_response(cache_key)
             if cached is not None:
@@ -827,6 +830,27 @@ class VerilumeRAG:
             local_answer_relevant = True
             local_sufficient = self._is_sufficient(local_answer)
             diagnostics["local_identity_fallback"] = True
+            diagnostics["local_answer_relevant"] = local_answer_relevant
+            diagnostics["local_sufficient"] = local_sufficient
+            if local_sufficient and _local_sources_support_identity_fact(local_sources):
+                used_local_sources = _local_sources_used_in_answer(local_sources, local_answer) or local_sources
+                _finalize_evidence_diagnostics(
+                    diagnostics,
+                    answer=local_answer,
+                    used_local_sources=used_local_sources,
+                    used_web_sources=[],
+                    model_answer=None,
+                    model_sufficient=False,
+                )
+                response = RAGResponse(
+                    local_answer,
+                    used_local_sources,
+                    [],
+                    False,
+                    "local-grounded",
+                    diagnostics,
+                )
+                return _attach_conversation_state(response, conversation.state, original_question, question)
 
         prefer_local_answer = bool(local_sufficient and not current_or_web and not force_web)
         diagnostics["prefer_local_answer"] = prefer_local_answer
@@ -1762,6 +1786,7 @@ def _response_cache_key(
     question: str,
     history: Sequence[ChatMessage],
     conversation_state: ConversationState | None = None,
+    settings: AppSettings | None = None,
 ) -> tuple:
     normalized = normalize_query(question)
     normalized_question = normalized.canonical or re.sub(
@@ -1778,7 +1803,29 @@ def _response_cache_key(
             tuple(sorted(conversation_state.roles.items())),
             tuple(conversation_state.preferred_sources),
         )
-    return normalized_question, state_key
+    settings_key = ()
+    if settings is not None:
+        try:
+            web_ready = settings.web_search_ready()
+        except Exception:
+            web_ready = False
+        active_model_value = getattr(settings, "active_generation_model", "")
+        if callable(active_model_value):
+            active_model_value = active_model_value()
+        settings_key = (
+            bool(getattr(settings, "enable_web_search", False)),
+            str(getattr(settings, "web_search_provider", "")),
+            bool(web_ready),
+            int(getattr(settings, "web_search_max_results", 0) or 0),
+            int(getattr(settings, "web_search_timeout_seconds", 0) or 0),
+            str(active_model_value),
+            str(getattr(settings, "collection_name", "")),
+            str(getattr(settings, "docs_dir", "")),
+            str(getattr(settings, "chroma_dir", "")),
+            int(getattr(settings, "retriever_k", 0) or 0),
+            float(getattr(settings, "retrieval_score_threshold", 0.0) or 0.0),
+        )
+    return normalized_question, state_key, settings_key
 
 
 def _query_needs_context_cache_key(question: str) -> bool:
@@ -2417,6 +2464,8 @@ def _response_cache_ttl(response: RAGResponse) -> float:
         return CURRENT_RESPONSE_CACHE_TTL_SECONDS
     if response.confidence in {"needs-token", "model-selection-warning", "generation-error"}:
         return 0.0
+    if response.confidence == "low" and not response.local_sources and not response.web_sources:
+        return 0.0
     return DEFAULT_RESPONSE_CACHE_TTL_SECONDS
 
 
@@ -2649,9 +2698,13 @@ def _local_search_queries(
 
     if identity_tokens and not local_file_question:
         name = " ".join(identity_tokens)
+        reversed_name = " ".join(reversed(identity_tokens))
         candidates.extend(
             [
                 name,
+                reversed_name,
+                f"{name} passport",
+                f"{name} identity document",
                 f"{name} profile",
                 f"{name} publications",
                 f"{name} research",
@@ -3290,14 +3343,19 @@ def _looks_like_bare_entity_query(words):
 def _filter_local_sources_for_identity(sources, identity_tokens):
     if not identity_tokens:
         return list(sources)
-    return _relabel_local_sources(
-        [
-            source
-            for source in sources
-            if _source_matches_identity(f"{source.document} {source.text}", identity_tokens)
-            and _identity_local_source_is_relevant(source, identity_tokens)
-        ]
+    relevant = [
+        source
+        for source in sources
+        if _identity_local_source_is_relevant(source, identity_tokens)
+    ]
+    relevant.sort(
+        key=lambda source: (
+            _source_identity_match_count(f"{source.document} {source.text}", identity_tokens),
+            float(getattr(source, "score", 0.0) or 0.0),
+        ),
+        reverse=True,
     )
+    return _relabel_local_sources(relevant)
 
 
 def _filter_relevant_local_sources(
@@ -3350,7 +3408,7 @@ def _filter_relevant_local_sources(
         if identity_tokens and not _source_matches_identity(
             f"{source.document} {source.text}",
             identity_tokens,
-        ):
+        ) and not _passport_source_matches_identity_flex(source, identity_tokens):
             continue
         if identity_tokens and not local_file_question and not _identity_local_source_is_relevant(
             source,
@@ -3467,26 +3525,50 @@ def _normalized_phrase_in_text(text: str, marker: str) -> bool:
 
 
 def _source_matches_identity(text, identity_tokens):
+    return _source_identity_match_count(text, identity_tokens) >= len(identity_tokens)
+
+
+def _source_identity_match_count(text, identity_tokens) -> int:
+    if not identity_tokens:
+        return 0
     source_tokens = set(re.findall(r"[a-z][a-z'’-]+", _fold_text(text)))
     folded_tokens = {_fold_identity_token(token) for token in source_tokens}
+    matches = 0
     for token in identity_tokens:
         folded = _fold_identity_token(token)
         if token in source_tokens or folded in folded_tokens:
+            matches += 1
             continue
         if len(token) >= 5 and any(
             SequenceMatcher(None, folded, candidate).ratio() >= 0.84
             for candidate in folded_tokens
         ):
-            continue
+            matches += 1
+    return matches
+
+
+def _minimum_identity_fact_matches(identity_tokens) -> int:
+    if not identity_tokens:
+        return 0
+    if len(identity_tokens) >= 3:
+        return 1
+    return 1
+
+
+def _passport_source_matches_identity_flex(source, identity_tokens) -> bool:
+    if not identity_tokens or not _local_source_supports_identity_fact(source):
         return False
-    return True
+    context = f"{getattr(source, 'document', '')} {getattr(source, 'text', '')}"
+    match_count = _source_identity_match_count(context, identity_tokens)
+    return match_count >= _minimum_identity_fact_matches(identity_tokens)
 
 
 def _identity_local_source_is_relevant(source, identity_tokens) -> bool:
     text = _normalized_source_text(source)
     document = re.sub(r"[^a-z0-9]+", " ", getattr(source, "document", "").lower())
     contains_identity = _source_matches_identity(f"{document} {text}", identity_tokens)
-    if not contains_identity:
+    partial_identity_fact = _passport_source_matches_identity_flex(source, identity_tokens)
+    if not contains_identity and not partial_identity_fact:
         return False
 
     signal_text = _strip_negated_identity_profile_markers(text)
@@ -3495,6 +3577,8 @@ def _identity_local_source_is_relevant(source, identity_tokens) -> bool:
     has_negative_signal = any(marker in text for marker in IDENTITY_LOCAL_NEGATIVE_MARKERS)
     document_has_identity = all(_fold_identity_token(token) in document for token in identity_tokens)
 
+    if partial_identity_fact:
+        return True
     if has_negative_signal and not has_strong_signal:
         return False
     if document_has_identity:

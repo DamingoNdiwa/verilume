@@ -1000,6 +1000,64 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertEqual(rag.generator.local_calls, [])
         self.assertEqual(rag.generator.model_calls, [])
 
+    def test_birthplace_question_uses_passport_when_only_one_name_token_matches(self) -> None:
+        passport_source = LocalSource(
+            label="S1",
+            document="sample_passport.pdf",
+            page=1,
+            chunk_id="passport-partial-name",
+            text=(
+                "Passport REPUBLIC OF SAMPLE Name MORGAN VALE "
+                "Date of birth 04.10.1989 Place of birth BUEA"
+            ),
+            score=0.94,
+        )
+        rag = self._make_rag(
+            local_answer=LOCAL_UNKNOWN,
+            model_answer="Model answer that should not be used.",
+            local_sources=[],
+        )
+        rag.settings = AppSettings(hf_token="token", enable_web_search=False)
+        rag.retriever = FakeRetriever([passport_source])
+
+        result = rag.ask("Where was Robin Morgan born?")
+
+        self.assertEqual(result.confidence, "local-grounded")
+        self.assertFalse(result.used_web)
+        self.assertIn("Buea", result.answer)
+        self.assertIn("[S1]", result.answer)
+        self.assertEqual([source.document for source in result.local_sources], ["sample_passport.pdf"])
+        self.assertEqual(rag.generator.model_calls, [])
+
+    def test_bare_reordered_name_can_use_passport_identity_evidence(self) -> None:
+        passport_source = LocalSource(
+            label="S1",
+            document="sample_passport.pdf",
+            page=1,
+            chunk_id="passport-reordered-name",
+            text=(
+                "Passport REPUBLIC OF SAMPLE Name MORGAN VALE "
+                "Date of birth 04.10.1989 Place of birth BUEA"
+            ),
+            score=0.94,
+        )
+        rag = self._make_rag(
+            local_answer=LOCAL_UNKNOWN,
+            model_answer="Model answer that should not be used.",
+            local_sources=[],
+        )
+        rag.settings = AppSettings(hf_token="token", enable_web_search=False)
+        rag.retriever = FakeRetriever([passport_source])
+
+        result = rag.ask("Vale Robin Morgan")
+
+        self.assertEqual(result.confidence, "local-grounded")
+        self.assertFalse(result.used_web)
+        self.assertIn("[S1]", result.answer)
+        self.assertEqual([source.document for source in result.local_sources], ["sample_passport.pdf"])
+        self.assertTrue(result.diagnostics["local_sufficient"])
+        self.assertEqual(rag.generator.model_calls, [])
+
     def test_bare_person_query_resets_government_memory_and_uses_person_plan(self) -> None:
         rag = self._make_rag(
             local_answer=LOCAL_UNKNOWN,
@@ -1385,6 +1443,64 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertIn("Econometrics", result.answer)
         self.assertIn("not externally verified", result.answer)
         self.assertEqual(result.web_sources, [])
+
+    def test_local_and_model_gap_automatically_uses_web_when_enabled(self) -> None:
+        rag = self._make_rag(
+            local_answer=LOCAL_UNKNOWN,
+            model_answer="I couldn't find any specific information about Florian Felice.",
+            web_answer="Florian Felice is described in the web evidence [W1].",
+            local_sources=[],
+            web_sources=[
+                WebSource(
+                    label="W1",
+                    title="Florian Felice profile",
+                    url="https://example.com/florian-felice",
+                    content="Florian Felice is described in this profile.",
+                )
+            ],
+        )
+
+        result = rag.ask("Florian Felice")
+
+        self.assertTrue(result.used_web)
+        self.assertEqual(result.diagnostics["web_reason"], "fallback_after_model")
+        self.assertFalse(result.diagnostics["model_sufficient"])
+        self.assertEqual(len(rag.generator.model_calls), 1)
+        self.assertGreater(len(rag.web_search.queries), 0)
+        self.assertIn("[W1]", result.answer)
+
+    def test_low_confidence_miss_is_not_reused_after_web_is_enabled(self) -> None:
+        rag = self._make_rag(
+            local_answer=LOCAL_UNKNOWN,
+            model_answer=MODEL_UNKNOWN,
+            local_sources=[],
+            web_sources=[],
+        )
+        rag.settings = AppSettings(hf_token="token", enable_web_search=False)
+
+        first = rag.ask("Florian Felice")
+
+        rag.settings = AppSettings(
+            hf_token="token",
+            tavily_api_key="key",
+            enable_web_search=True,
+        )
+        rag.web_search = FakeWebSearch(
+            [
+                WebSource(
+                    label="W1",
+                    title="Florian Felice profile",
+                    url="https://example.com/florian-felice",
+                    content="Florian Felice is described in this profile.",
+                )
+            ]
+        )
+        second = rag.ask("Florian Felice")
+
+        self.assertEqual(first.confidence, "low")
+        self.assertNotIn("cache_hit", second.diagnostics)
+        self.assertTrue(second.used_web)
+        self.assertIn("[W1]", second.answer)
 
     def test_model_knowledge_answers_stable_identity_when_web_is_disabled(self) -> None:
         rag = self._make_rag(
