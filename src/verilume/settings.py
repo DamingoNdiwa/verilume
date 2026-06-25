@@ -381,6 +381,13 @@ def _saved_config_values(
         "WEB_SEARCH_MAX_WORKERS": settings.web_search_max_workers,
         "ENABLE_AGGRESSIVE_WEB_FALLBACK": settings.enable_aggressive_web_fallback,
         "WEB_SEARCH_FALLBACK_MAX_RESULTS": settings.web_search_fallback_max_results,
+        # Semantic cache
+        "SEMANTIC_CACHE_ENABLED": settings.semantic_cache_enabled,
+        "SEMANTIC_CACHE_PATH": settings.semantic_cache_path,
+        "SEMANTIC_CACHE_STABLE_TTL_SECONDS": settings.semantic_cache_stable_ttl_seconds,
+        "SEMANTIC_CACHE_CURRENT_TTL_SECONDS": settings.semantic_cache_current_ttl_seconds,
+        "SEMANTIC_CACHE_ENTITY_TTL_SECONDS": settings.semantic_cache_entity_ttl_seconds,
+        "SEMANTIC_CACHE_LOCAL_TTL_SECONDS": settings.semantic_cache_local_ttl_seconds,
         # Retrieval and UI
         "SHOW_LOCAL_SOURCES": settings.show_local_sources,
         "ANSWER_STYLE": settings.answer_style,
@@ -433,6 +440,12 @@ class AppSettings:
     docs_dir: Path = DATA_HOME / "documents"
     chroma_dir: Path = DATA_HOME / "chroma_db"
     collection_name: str = "verilume_docs"
+    semantic_cache_enabled: bool = True
+    semantic_cache_path: Path = DATA_HOME / "semantic_cache.json"
+    semantic_cache_stable_ttl_seconds: int = 604800
+    semantic_cache_current_ttl_seconds: int = 3600
+    semantic_cache_entity_ttl_seconds: int = 604800
+    semantic_cache_local_ttl_seconds: int = 0
 
     # Embeddings
     embed_model: str = "BAAI/bge-small-en-v1.5"
@@ -552,6 +565,12 @@ class AppSettings:
             self,
             "manifest_path",
             Path(self.manifest_path).expanduser(),
+        )
+
+        object.__setattr__(
+            self,
+            "semantic_cache_path",
+            Path(self.semantic_cache_path).expanduser(),
         )
 
         object.__setattr__(
@@ -694,6 +713,26 @@ class AppSettings:
             self,
             "web_search_fallback_max_results",
             max(1, int(self.web_search_fallback_max_results)),
+        )
+        object.__setattr__(
+            self,
+            "semantic_cache_stable_ttl_seconds",
+            max(0, int(self.semantic_cache_stable_ttl_seconds)),
+        )
+        object.__setattr__(
+            self,
+            "semantic_cache_current_ttl_seconds",
+            max(0, int(self.semantic_cache_current_ttl_seconds)),
+        )
+        object.__setattr__(
+            self,
+            "semantic_cache_entity_ttl_seconds",
+            max(0, int(self.semantic_cache_entity_ttl_seconds)),
+        )
+        object.__setattr__(
+            self,
+            "semantic_cache_local_ttl_seconds",
+            max(0, int(self.semantic_cache_local_ttl_seconds)),
         )
 
         object.__setattr__(
@@ -893,6 +932,30 @@ class AppSettings:
             collection_name=os.getenv(
                 "COLLECTION_NAME",
                 defaults.collection_name,
+            ),
+            semantic_cache_enabled=_bool(
+                "SEMANTIC_CACHE_ENABLED",
+                defaults.semantic_cache_enabled,
+            ),
+            semantic_cache_path=_path(
+                "SEMANTIC_CACHE_PATH",
+                defaults.semantic_cache_path,
+            ),
+            semantic_cache_stable_ttl_seconds=_int(
+                "SEMANTIC_CACHE_STABLE_TTL_SECONDS",
+                defaults.semantic_cache_stable_ttl_seconds,
+            ),
+            semantic_cache_current_ttl_seconds=_int(
+                "SEMANTIC_CACHE_CURRENT_TTL_SECONDS",
+                defaults.semantic_cache_current_ttl_seconds,
+            ),
+            semantic_cache_entity_ttl_seconds=_int(
+                "SEMANTIC_CACHE_ENTITY_TTL_SECONDS",
+                defaults.semantic_cache_entity_ttl_seconds,
+            ),
+            semantic_cache_local_ttl_seconds=_int(
+                "SEMANTIC_CACHE_LOCAL_TTL_SECONDS",
+                defaults.semantic_cache_local_ttl_seconds,
             ),
             # Embeddings
             embed_model=os.getenv("EMBED_MODEL", defaults.embed_model),
@@ -1262,3 +1325,4 @@ def ensure_app_dirs(settings: AppSettings) -> None:
     settings.docs_dir.mkdir(parents=True, exist_ok=True)
     settings.chroma_dir.mkdir(parents=True, exist_ok=True)
     settings.manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.semantic_cache_path.parent.mkdir(parents=True, exist_ok=True)

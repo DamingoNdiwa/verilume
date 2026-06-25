@@ -10,7 +10,7 @@ import unicodedata
 from collections import Counter
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
@@ -61,6 +61,11 @@ from verilume.core.reranking import query_terms, rerank_local_sources, rerank_we
 from verilume.core.retrieval import ChromaRetriever
 from verilume.core.schemas import ChatMessage, LocalSource, RAGResponse, WebSource
 from verilume.core.search_planner import SearchPlanner
+from verilume.core.semantic_cache import (
+    SemanticCache,
+    document_fingerprint,
+    semantic_cache_ttl_seconds,
+)
 from verilume.core.web_search import (
     DuckDuckGoSearch,
     boost_priority_sources,
@@ -510,6 +515,11 @@ class VerilumeRAG:
         self.query_understanding_agent = QueryUnderstandingAgent()
         self.search_planner = SearchPlanner()
         self.citation_verifier = CitationVerificationAgent()
+        self.semantic_cache = (
+            SemanticCache(settings.semantic_cache_path)
+            if getattr(settings, "semantic_cache_enabled", True)
+            else None
+        )
         self._response_cache: dict[tuple, tuple[float, RAGResponse]] = {}
 
     def ask(
@@ -522,16 +532,73 @@ class VerilumeRAG:
     ) -> RAGResponse:
         history = history or []
         cache_key = _response_cache_key(question, history, conversation_state, self.settings)
+        semantic_cache_allowed = (
+            not history
+            and conversation_state is None
+            and not _query_needs_context_cache_key(question)
+        )
         if should_stop is None:
             cached = self._cached_response(cache_key)
             if cached is not None:
                 _emit_stage(on_stage, "✓ Cached answer ready")
                 return cached
+            if semantic_cache_allowed:
+                semantic_cached = self._semantic_cached_response(question, on_stage=on_stage)
+                if semantic_cached is not None:
+                    self._store_cached_response(cache_key, semantic_cached)
+                    return semantic_cached
 
         response = self._ask_uncached(question, history, conversation_state, should_stop, on_stage)
         if should_stop is None:
+            if semantic_cache_allowed:
+                self._store_semantic_cached_response(question, response)
             self._store_cached_response(cache_key, response)
         return response
+
+    def _semantic_cached_response(
+        self,
+        question: str,
+        *,
+        on_stage: Callable[[str], None] | None = None,
+    ) -> RAGResponse | None:
+        if self.semantic_cache is None:
+            return None
+
+        understanding = classify_question(question)
+        fingerprint = document_fingerprint(self.settings)
+        cached = self.semantic_cache.lookup(
+            question,
+            policy=understanding.evidence_policy,
+            document_fingerprint=fingerprint,
+            web_enabled=bool(getattr(self.settings, "enable_web_search", False)),
+            generation_backend=str(getattr(self.settings, "generation_backend", "")),
+            model_name=str(self.settings.active_generation_model()),
+            web_provider=str(getattr(self.settings, "web_search_provider", "")),
+        )
+        ttl_seconds = semantic_cache_ttl_seconds(understanding, self.settings)
+        if cached is None or not cached.is_fresh(datetime.now(timezone.utc), ttl_seconds, fingerprint):
+            return None
+
+        response = cached.to_rag_response()
+        response.diagnostics["semantic_cache_ttl_seconds"] = ttl_seconds
+        _emit_stage(on_stage, "✓ Semantic cache answer ready")
+        return response
+
+    def _store_semantic_cached_response(self, question: str, response: RAGResponse) -> None:
+        if self.semantic_cache is None:
+            return
+
+        understanding = classify_question(question)
+        self.semantic_cache.store(
+            question,
+            response,
+            policy=understanding.evidence_policy,
+            document_fingerprint=document_fingerprint(self.settings),
+            web_enabled=bool(getattr(self.settings, "enable_web_search", False)),
+            generation_backend=str(getattr(self.settings, "generation_backend", "")),
+            model_name=str(self.settings.active_generation_model()),
+            web_provider=str(getattr(self.settings, "web_search_provider", "")),
+        )
 
     def _ask_uncached(
         self,

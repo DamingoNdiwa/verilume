@@ -25,6 +25,7 @@ The main files and their jobs are:
 | `src/verilume/core/retrieval.py` | Chroma retriever with dense, lexical, and hybrid retrieval. |
 | `src/verilume/core/query_interpreter.py` | Interprets user intent, follow-up context, source policy, and search preferences. |
 | `src/verilume/core/search_planner.py` | Produces a search plan describing whether local, model knowledge, or web evidence should be used. |
+| `src/verilume/core/semantic_cache.py` | Persistent semantic answer cache keyed by question meaning, evidence policy, document fingerprint, web settings, backend, and model. |
 | `src/verilume/rag.py` | Main orchestration layer. It runs local retrieval, AI knowledge generation, web search, reranking, answer selection, citation verification, and final answer validation. |
 | `src/verilume/ui/sidebar.py` | Settings, upload controls, remove-document controls, and stats cards. |
 | `src/verilume/ui/chat.py` | Chat rendering, source blocks, evidence panels, and exports. |
@@ -36,6 +37,7 @@ By default, user data is stored in the local user directory:
 - `~/.verilume/documents` stores uploaded source files.
 - `~/.verilume/chroma_db` stores the Chroma vector database.
 - `~/.verilume/ingestion_manifest.json` stores file hashes and ingestion metadata.
+- `~/.verilume/semantic_cache.json` stores reusable evidence-ranked answers.
 - `~/.verilume/config.env` stores local app settings such as tokens and model choices.
 
 This keeps user content outside the repository and makes the app usable as a desktop tool without polluting the project tree.
@@ -197,6 +199,36 @@ The modes are:
 | `Research Mode` | Uses the full hybrid path and is intended for source-heavy answers and broader evidence collection. |
 
 Auto remains the default because it preserves the local-first safety model. The explicit modes are user controls; they should not be used by the classifier as hidden defaults.
+
+### 5.8 Semantic answer cache
+
+Verilume now has two answer caches:
+
+1. A short in-memory response cache for immediate repeated questions inside the same app session.
+2. A persistent semantic cache stored at `~/.verilume/semantic_cache.json`.
+
+The semantic cache is deliberately evidence-aware. A cached answer can only be reused when all of these match:
+
+- normalized question meaning
+- evidence policy
+- local document fingerprint
+- web enabled/disabled state
+- web search provider
+- generation backend
+- selected generation model
+
+The document fingerprint includes the configured documents directory, Chroma location, collection name, ingestion manifest content, and uploaded document metadata. This means local-document answers are invalidated when files or the manifest change, even if the user asks a similar question later.
+
+Cache freshness follows the same evidence philosophy:
+
+| Question type | Cache behavior |
+| --- | --- |
+| Stable/static facts | Can be reused for the stable semantic-cache TTL. |
+| Person/company/entity lookups | Can be reused for the entity TTL, but only with the same local/web/model context. |
+| Current, dynamic, and news questions | Use a short TTL because the answer may change. |
+| Local-document questions | Stay valid until the document fingerprint changes. |
+
+The semantic cache stores the final reconciled answer, local citations, web citations, model-answer support text, diagnostics, and evidence scores. On a hit, the RAG layer returns the cached evidence-ranked answer instead of running retrieval and generation again. On a miss or stale entry, Verilume runs the full local/model/web pipeline.
 
 ## 6. How Verilume Decides on the Final Answer
 

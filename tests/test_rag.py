@@ -223,7 +223,13 @@ class RAGRoutingTests(unittest.TestCase):
         local_sources=None,
         web_sources=None,
     ):
-        rag = VerilumeRAG(AppSettings(hf_token="token", tavily_api_key="key"))
+        rag = VerilumeRAG(
+            AppSettings(
+                hf_token="token",
+                tavily_api_key="key",
+                semantic_cache_enabled=False,
+            )
+        )
         rag.retriever = FakeRetriever([LOCAL_SOURCE] if local_sources is None else local_sources)
         rag.generator = FakeGenerator(local_answer, model_answer, web_answer)
         rag.web_search = FakeWebSearch(
