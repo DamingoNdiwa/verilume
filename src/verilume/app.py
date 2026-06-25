@@ -224,10 +224,6 @@ def _render_workspace_summary(settings: AppSettings, stats: dict[str, int]) -> N
     <div class="veri-workspace-kicker">Suggested Prompts</div>
     <div class="veri-prompt-chip-row">{prompt_items}</div>
   </div>
-  <div class="veri-workspace-card">
-    <div class="veri-workspace-kicker">Shortcuts</div>
-    <div class="veri-shortcuts"><span>⌘K Search</span><span>⌘L Clear</span><span>⌘B Sidebar</span><span>⌘↵ Send</span></div>
-  </div>
 </div>
         """,
         unsafe_allow_html=True,

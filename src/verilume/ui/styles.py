@@ -490,7 +490,7 @@ button[kind="secondary"][data-testid="baseButton-secondary"] {
 .veri-workspace-grid {
   display: grid;
   gap: .75rem;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 0 0 1rem 0;
 }
 
@@ -530,15 +530,13 @@ button[kind="secondary"][data-testid="baseButton-secondary"] {
   overflow-wrap: anywhere;
 }
 
-.veri-prompt-chip-row,
-.veri-shortcuts {
+.veri-prompt-chip-row {
   display: flex;
   flex-wrap: wrap;
   gap: .42rem;
 }
 
-.veri-prompt-chip-row span,
-.veri-shortcuts span {
+.veri-prompt-chip-row span {
   border: 1px solid var(--veri-line);
   border-radius: 999px;
   color: var(--veri-muted);
