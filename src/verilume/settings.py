@@ -143,6 +143,11 @@ SEARCH_MODE_ALIASES = {
     "local + ai + web": "Local + AI + Web",
     "local_plus_ai_plus_web": "Local + AI + Web",
     "hybrid": "Local + AI + Web",
+    "ai": "AI Only",
+    "ai_only": "AI Only",
+    "ai only": "AI Only",
+    "model": "AI Only",
+    "model_only": "AI Only",
     "web": "Web Only",
     "web_only": "Web Only",
     "web only": "Web Only",
@@ -392,6 +397,7 @@ def _saved_config_values(
         "KNOWLEDGE_GRAPH_PATH": settings.knowledge_graph_path,
         "ENABLE_GRAPHRAG": settings.enable_graphrag,
         "MULTIMODAL_STORE_PATH": settings.multimodal_store_path,
+        "BENCHMARK_MODE": settings.benchmark_mode,
         # Retrieval and UI
         "SHOW_LOCAL_SOURCES": settings.show_local_sources,
         "ANSWER_STYLE": settings.answer_style,
@@ -454,6 +460,7 @@ class AppSettings:
     knowledge_graph_path: Path = DATA_HOME / "knowledge_graph.sqlite"
     enable_graphrag: bool = True
     multimodal_store_path: Path = DATA_HOME / "multimodal.sqlite"
+    benchmark_mode: bool = False
 
     # Embeddings
     embed_model: str = "BAAI/bge-small-en-v1.5"
@@ -998,6 +1005,10 @@ class AppSettings:
             multimodal_store_path=_path(
                 "MULTIMODAL_STORE_PATH",
                 defaults.multimodal_store_path,
+            ),
+            benchmark_mode=_bool(
+                "BENCHMARK_MODE",
+                defaults.benchmark_mode,
             ),
             # Embeddings
             embed_model=os.getenv("EMBED_MODEL", defaults.embed_model),

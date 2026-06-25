@@ -33,6 +33,16 @@ from verilume.core.agents import (
     update_state_from_answer,
 )
 from verilume.core.agentic_planner import CALCULATE, EXTRACT_TABLE, AgenticPlanner
+from verilume.core.benchmark import (
+    AI_ONLY,
+    FULL,
+    LOCAL_ONLY,
+    WEB_ONLY,
+    BenchmarkReport,
+    benchmark_notes,
+    choose_best_mode,
+    make_benchmark_result,
+)
 from verilume.core.citation_verifier import CitationVerificationAgent
 from verilume.core.conversation_state import ConversationState
 from verilume.core.embeddings import EmbeddingService
@@ -548,6 +558,9 @@ class VerilumeRAG:
         on_stage: Callable[[str], None] | None = None,
     ) -> RAGResponse:
         history = history or []
+        if getattr(self.settings, "benchmark_mode", False):
+            return self._ask_benchmark(question, history, conversation_state, should_stop, on_stage)
+
         cache_key = _response_cache_key(question, history, conversation_state, self.settings)
         semantic_cache_allowed = (
             not history
@@ -571,6 +584,57 @@ class VerilumeRAG:
                 self._store_semantic_cached_response(question, response)
             self._store_cached_response(cache_key, response)
         return response
+
+    def _ask_benchmark(
+        self,
+        question: str,
+        history: Sequence[ChatMessage],
+        conversation_state: ConversationState | None = None,
+        should_stop: Callable[[], bool] | None = None,
+        on_stage: Callable[[str], None] | None = None,
+    ) -> RAGResponse:
+        _check_generation_stop(should_stop)
+        _emit_stage(on_stage, "Benchmark: preparing strategy comparison...")
+        results = []
+        for mode, mode_settings in _benchmark_mode_settings(self.settings):
+            _check_generation_stop(should_stop)
+            _emit_stage(on_stage, f"Benchmark: running {_benchmark_mode_label(mode)}...")
+            started = time.perf_counter()
+            try:
+                service = self if mode == FULL else VerilumeRAG(mode_settings)
+                response = service._ask_uncached(
+                    question,
+                    history,
+                    conversation_state,
+                    should_stop,
+                    on_stage,
+                )
+            except Exception as exc:
+                response = RAGResponse(
+                    answer=f"{_benchmark_mode_label(mode)} could not complete: {_clean_error_message(exc)}",
+                    local_sources=[],
+                    web_sources=[],
+                    used_web=False,
+                    confidence="low",
+                    diagnostics={
+                        "benchmark_error": _clean_error_message(exc),
+                        "benchmark_mode_name": mode,
+                    },
+                )
+            latency = time.perf_counter() - started
+            results.append(make_benchmark_result(mode, response, latency))
+            _emit_stage(on_stage, f"✓ Benchmark: {_benchmark_mode_label(mode)} ready")
+
+        best_mode = choose_best_mode(results)
+        report = BenchmarkReport(
+            question=question,
+            results=results,
+            best_mode=best_mode,
+            notes=benchmark_notes(results, best_mode),
+        )
+        response = report.to_rag_response()
+        state = conversation_state or self.conversation_context_agent.state_from_history(list(history))
+        return _attach_conversation_state(response, state, question, question)
 
     def _semantic_cached_response(
         self,
@@ -3641,6 +3705,10 @@ def _search_mode_key(settings: AppSettings) -> str:
         "local ai web": "local_ai_web",
         "local model web": "local_ai_web",
         "hybrid": "local_ai_web",
+        "ai only": "ai_only",
+        "ai": "ai_only",
+        "model only": "ai_only",
+        "model": "ai_only",
         "web only": "web_only",
         "web": "web_only",
         "research mode": "research",
@@ -3649,7 +3717,7 @@ def _search_mode_key(settings: AppSettings) -> str:
 
 
 def _search_mode_allows_local(mode: str) -> bool:
-    return mode != "web_only"
+    return mode not in {"web_only", "ai_only"}
 
 
 def _search_mode_allows_model(mode: str) -> bool:
@@ -3657,7 +3725,47 @@ def _search_mode_allows_model(mode: str) -> bool:
 
 
 def _search_mode_allows_web(mode: str) -> bool:
-    return mode not in {"local_only", "local_ai"}
+    return mode not in {"local_only", "local_ai", "ai_only"}
+
+
+def _benchmark_mode_settings(settings: AppSettings) -> list[tuple[str, AppSettings]]:
+    base = settings.with_overrides(
+        benchmark_mode=False,
+        semantic_cache_enabled=False,
+    )
+    return [
+        (FULL, base),
+        (
+            LOCAL_ONLY,
+            base.with_overrides(
+                search_mode="Local Only",
+                enable_web_search=False,
+            ),
+        ),
+        (
+            AI_ONLY,
+            base.with_overrides(
+                search_mode="AI Only",
+                enable_web_search=False,
+            ),
+        ),
+        (
+            WEB_ONLY,
+            base.with_overrides(
+                search_mode="Web Only",
+                enable_web_search=settings.enable_web_search,
+            ),
+        ),
+    ]
+
+
+def _benchmark_mode_label(mode: str) -> str:
+    return {
+        FULL: "Full",
+        LOCAL_ONLY: "Local Only",
+        AI_ONLY: "AI Only",
+        WEB_ONLY: "Web Only",
+    }.get(mode, mode.replace("_", " ").title())
 
 
 def _best_local_score(local_sources: Sequence[LocalSource]) -> float:

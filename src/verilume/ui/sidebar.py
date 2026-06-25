@@ -95,6 +95,12 @@ def render_sidebar(
                 value=base_settings.enable_web_search,
             )
 
+            benchmark_mode = st.toggle(
+                "Benchmark Mode",
+                value=base_settings.benchmark_mode,
+                help="Compare Full, Local Only, AI Only, and Web Only strategies for each question.",
+            )
+
             provider_keys = list(WEB_SEARCH_PROVIDER_LABELS.keys())
             provider_labels = [WEB_SEARCH_PROVIDER_LABELS[key] for key in provider_keys]
 
@@ -113,6 +119,7 @@ def render_sidebar(
 
             overrides["search_mode"] = search_mode
             overrides["enable_web_search"] = enable_web_search
+            overrides["benchmark_mode"] = benchmark_mode
             overrides["web_search_provider"] = selected_provider
 
             overrides.update(_render_web_provider_settings(base_settings, selected_provider))

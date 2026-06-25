@@ -23,6 +23,7 @@ The main files and their jobs are:
 | `src/verilume/settings.py` | Loads environment variables and local user settings from `~/.verilume/config.env`. |
 | `src/verilume/ingest.py` | Parses files, normalizes content, chunks text, embeds it, and builds the local Chroma knowledge base. |
 | `src/verilume/core/agentic_planner.py` | Produces explicit pipeline actions such as local search, model answer, web search, document summarization, table extraction, and calculation. |
+| `src/verilume/core/benchmark.py` | Compares Full, Local Only, AI Only, and Web Only answer strategies with latency, citation counts, confidence, and faithfulness diagnostics. |
 | `src/verilume/core/claim_extraction.py` | Extracts atomic factual claims from final answers for evidence comparison. |
 | `src/verilume/core/evidence_comparison.py` | Compares each claim against local, web, and AI evidence streams. |
 | `src/verilume/core/graphrag.py` | Expands entity/topic questions through the knowledge graph and produces graph-backed local source candidates. |
@@ -364,6 +365,34 @@ The multimodal retriever searches captions, OCR text, formula text, document nam
 
 If no visual/OCR evidence exists, the system should say that instead of guessing.
 
+### 5.14 Benchmark Mode
+
+Benchmark Mode is an opt-in diagnostic switch in the sidebar. It is off by default.
+
+When enabled, a user question is run through four isolated strategies:
+
+| Benchmark strategy | Behavior |
+| --- | --- |
+| `full` | Uses the normal Verilume evidence policy and the selected search mode, with benchmark and semantic caches disabled for the run. |
+| `local_only` | Searches indexed local files only and blocks model/web evidence. |
+| `ai_only` | Skips local and web evidence and asks the configured model for a model-knowledge answer. |
+| `web_only` | Skips local and model evidence and uses the configured web provider when available. |
+
+Each strategy records:
+
+- answer text
+- confidence
+- local source count
+- web source count
+- total source count
+- latency
+- answer-verification or faithfulness score when available
+- diagnostics from the underlying RAG pass
+
+The benchmark report picks a best mode using confidence, source count, faithfulness, and latency. The UI shows a `Benchmark Results` table and collapsed per-mode answers so the user can compare behavior without losing the normal answer-first experience.
+
+Benchmark Mode is not meant to replace Auto routing. It is a research and debugging tool for checking whether local, model, web, or full hybrid evidence is producing the strongest answer for a given question.
+
 ## 6. How Verilume Decides on the Final Answer
 
 The final answer is chosen by combining several stages.
@@ -586,6 +615,7 @@ Several suggested improvements are now partially implemented and documented, whi
 | Answer before metadata | Implemented. The answer now appears before the Evidence Summary. |
 | Search modes | Implemented in settings, sidebar, and RAG routing. |
 | Source confidence bars | Implemented in the Evidence Summary for Local, Web, and AI streams. |
+| Benchmark mode | Implemented as an opt-in sidebar diagnostic that compares Full, Local Only, AI Only, and Web Only answer strategies. |
 | Progressive generation stages | Partially implemented through the Streamlit evidence-collection status log. More granular streaming token output is still future work. |
 | Entity verification | Implemented for person/company evidence filtering, web title/content/URL contamination checks, and entity-match scoring; still the top retrieval quality priority. |
 | Duplicate clustering | Implemented for exact URL/source merging and normalized-title clustering in identity web results. Broader semantic clustering across mirrors is future work. |

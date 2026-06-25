@@ -233,6 +233,7 @@ def _render_sources(
 
 def _render_sources_expanded(response: RAGResponse, settings: AppSettings) -> None:
     _render_evidence_details(response)
+    _render_benchmark_report(response)
     _render_evidence_comparison(response)
     if settings.show_local_sources and response.local_sources:
         st.markdown(
@@ -247,6 +248,7 @@ def _render_sources_expanded(response: RAGResponse, settings: AppSettings) -> No
 
 def _render_sources_inline(response: RAGResponse, settings: AppSettings) -> None:
     _render_evidence_details_inline(response)
+    _render_benchmark_report_inline(response)
     _render_evidence_comparison_inline(response)
     if settings.show_local_sources and response.local_sources:
         with st.container():
@@ -359,6 +361,62 @@ def _render_evidence_comparison(response: RAGResponse) -> None:
             conflict = bool(comparison.get("conflict_detected"))
             suffix = " Conflict detected." if conflict else ""
             st.caption(f"Decision: {decision} Winner: {_friendly_token(winner)}.{suffix}")
+
+
+def _render_benchmark_report(response: RAGResponse) -> None:
+    report = _benchmark_report(response)
+    if not report:
+        return
+
+    rows = []
+    for result in report.get("results", []):
+        if not isinstance(result, dict):
+            continue
+        faithfulness = result.get("faithfulness_score")
+        rows.append(
+            {
+                "Mode": str(result.get("mode") or "").replace("_", " ").title(),
+                "Confidence": result.get("confidence") or "",
+                "Sources": int(result.get("source_count") or 0),
+                "Local": int(result.get("local_source_count") or 0),
+                "Web": int(result.get("web_source_count") or 0),
+                "Time": f"{float(result.get('latency_seconds') or 0.0):.2f}s",
+                "Faithfulness": (
+                    f"{int(round(float(faithfulness) * 100))}%"
+                    if faithfulness is not None
+                    else "N/A"
+                ),
+            }
+        )
+    if not rows:
+        return
+
+    with st.expander("Benchmark Results", expanded=True):
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+        best_label = str(report.get("best_mode_label") or report.get("best_mode") or "").strip()
+        if best_label:
+            st.caption(f"Best mode: {best_label}")
+        for result in report.get("results", []):
+            if not isinstance(result, dict):
+                continue
+            mode = str(result.get("mode") or "").replace("_", " ").title()
+            answer = str(result.get("answer") or "").strip()
+            with st.expander(f"{mode} answer", expanded=False):
+                st.markdown(answer or "_No answer returned._")
+
+
+def _render_benchmark_report_inline(response: RAGResponse) -> None:
+    report = _benchmark_report(response)
+    if not report:
+        return
+    results = report.get("results") or []
+    best_label = str(report.get("best_mode_label") or report.get("best_mode") or "").strip()
+    st.caption(f"Benchmark Results — {len(results)} modes compared; best: {best_label or 'N/A'}")
+
+
+def _benchmark_report(response: RAGResponse) -> dict[str, Any]:
+    report = (response.diagnostics or {}).get("benchmark_report") or {}
+    return report if isinstance(report, dict) else {}
 
 
 def _render_evidence_comparison_inline(response: RAGResponse) -> None:
