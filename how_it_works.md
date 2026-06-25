@@ -27,6 +27,9 @@ The main files and their jobs are:
 | `src/verilume/core/evidence_comparison.py` | Compares each claim against local, web, and AI evidence streams. |
 | `src/verilume/core/graphrag.py` | Expands entity/topic questions through the knowledge graph and produces graph-backed local source candidates. |
 | `src/verilume/core/knowledge_graph.py` | SQLite knowledge graph for people, organizations, locations, topics, publications, documents, and their mentions/relations. |
+| `src/verilume/core/multimodal_store.py` | SQLite store for visual items, OCR text, formula text, captions, bounding boxes, and image paths. |
+| `src/verilume/core/multimodal_retrieval.py` | Retrieves visual/OCR evidence for page, figure, formula, plot, and scanned-image questions. |
+| `src/verilume/core/figure_captioning.py` | Conservative fallback captioning from existing captions, OCR text, or formula text. |
 | `src/verilume/core/retrieval.py` | Chroma retriever with dense, lexical, and hybrid retrieval. |
 | `src/verilume/core/query_interpreter.py` | Interprets user intent, follow-up context, source policy, and search preferences. |
 | `src/verilume/core/search_planner.py` | Produces a search plan describing whether local, model knowledge, or web evidence should be used. |
@@ -48,6 +51,7 @@ By default, user data is stored in the local user directory:
 - `~/.verilume/semantic_cache.json` stores reusable evidence-ranked answers.
 - `~/.verilume/tables` stores table metadata and local CSV snapshots for calculation questions.
 - `~/.verilume/knowledge_graph.sqlite` stores local document entities, relations, and mentions.
+- `~/.verilume/multimodal.sqlite` stores visual/OCR/formula evidence metadata.
 - `~/.verilume/config.env` stores local app settings such as tokens and model choices.
 
 This keeps user content outside the repository and makes the app usable as a desktop tool without polluting the project tree.
@@ -328,6 +332,37 @@ This helps questions such as:
 GraphRAG is evidence-bound: graph candidates are created from stored mentions, and each mention keeps document/page/chunk metadata. If the graph has no relevant context, Verilume simply continues with the normal retrieval path.
 
 GraphRAG can be disabled with `ENABLE_GRAPHRAG=false`. This is useful for test isolation or for users who want strict vector/lexical retrieval only.
+
+### 5.13 Multimodal retrieval
+
+Verilume now has the storage and retrieval layer for visual evidence. The current slice is conservative and local:
+
+- visual item ID
+- document
+- page
+- bounding box
+- caption
+- OCR text
+- formula text
+- image path
+- creation time
+
+The fallback captioner never guesses about unseen images. It uses, in order:
+
+1. an existing caption
+2. OCR text
+3. formula text
+4. a clear note that visual content was stored without readable OCR text
+
+The multimodal retriever searches captions, OCR text, formula text, document names, and page references. It can retrieve evidence for questions such as:
+
+- What does the diagram on page 4 show?
+- Which figure explains the model architecture?
+- Find the plot about regression analysis.
+- What formula appears on page 8?
+- Which image contains the word Luxembourg?
+
+If no visual/OCR evidence exists, the system should say that instead of guessing.
 
 ## 6. How Verilume Decides on the Final Answer
 

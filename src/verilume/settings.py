@@ -391,6 +391,7 @@ def _saved_config_values(
         "TABLE_STORE_DIR": settings.table_store_dir,
         "KNOWLEDGE_GRAPH_PATH": settings.knowledge_graph_path,
         "ENABLE_GRAPHRAG": settings.enable_graphrag,
+        "MULTIMODAL_STORE_PATH": settings.multimodal_store_path,
         # Retrieval and UI
         "SHOW_LOCAL_SOURCES": settings.show_local_sources,
         "ANSWER_STYLE": settings.answer_style,
@@ -452,6 +453,7 @@ class AppSettings:
     table_store_dir: Path = DATA_HOME / "tables"
     knowledge_graph_path: Path = DATA_HOME / "knowledge_graph.sqlite"
     enable_graphrag: bool = True
+    multimodal_store_path: Path = DATA_HOME / "multimodal.sqlite"
 
     # Embeddings
     embed_model: str = "BAAI/bge-small-en-v1.5"
@@ -595,6 +597,12 @@ class AppSettings:
             self,
             "knowledge_graph_path",
             Path(self.knowledge_graph_path).expanduser(),
+        )
+
+        object.__setattr__(
+            self,
+            "multimodal_store_path",
+            Path(self.multimodal_store_path).expanduser(),
         )
 
         object.__setattr__(
@@ -987,6 +995,10 @@ class AppSettings:
                 "ENABLE_GRAPHRAG",
                 defaults.enable_graphrag,
             ),
+            multimodal_store_path=_path(
+                "MULTIMODAL_STORE_PATH",
+                defaults.multimodal_store_path,
+            ),
             # Embeddings
             embed_model=os.getenv("EMBED_MODEL", defaults.embed_model),
             embed_device=os.getenv("EMBED_DEVICE", defaults.embed_device),
@@ -1358,3 +1370,4 @@ def ensure_app_dirs(settings: AppSettings) -> None:
     settings.semantic_cache_path.parent.mkdir(parents=True, exist_ok=True)
     settings.table_store_dir.mkdir(parents=True, exist_ok=True)
     settings.knowledge_graph_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.multimodal_store_path.parent.mkdir(parents=True, exist_ok=True)
