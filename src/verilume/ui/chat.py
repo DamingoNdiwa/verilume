@@ -233,6 +233,7 @@ def _render_sources(
 
 def _render_sources_expanded(response: RAGResponse, settings: AppSettings) -> None:
     _render_evidence_details(response)
+    _render_evidence_comparison(response)
     if settings.show_local_sources and response.local_sources:
         st.markdown(
             f'<div class="veri-source-section veri-source-section-local">{LOCAL_SOURCES_HEADER}</div>',
@@ -246,6 +247,7 @@ def _render_sources_expanded(response: RAGResponse, settings: AppSettings) -> No
 
 def _render_sources_inline(response: RAGResponse, settings: AppSettings) -> None:
     _render_evidence_details_inline(response)
+    _render_evidence_comparison_inline(response)
     if settings.show_local_sources and response.local_sources:
         with st.container():
             st.markdown(
@@ -337,6 +339,61 @@ def _render_evidence_details_inline(response: RAGResponse) -> None:
 
     summary = " · ".join(f"{label}: {value}" for label, value in rows[:3])
     st.caption(f"{EVIDENCE_HEADER} — {summary}")
+
+
+def _render_evidence_comparison(response: RAGResponse) -> None:
+    comparisons = _claim_comparisons(response)
+    if not comparisons:
+        return
+
+    with st.expander("Evidence Comparison", expanded=False):
+        for index, comparison in enumerate(comparisons, start=1):
+            claim = comparison.get("claim") or {}
+            st.markdown(f"**Claim {index}:** {claim.get('text', '')}")
+            cols = st.columns(3)
+            for col, source_type in zip(cols, ("local", "web", "ai"), strict=False):
+                with col:
+                    st.markdown(_comparison_stream_block(comparison, source_type))
+            decision = str(comparison.get("decision") or "").strip()
+            winner = str(comparison.get("winning_source_type") or "").strip()
+            conflict = bool(comparison.get("conflict_detected"))
+            suffix = " Conflict detected." if conflict else ""
+            st.caption(f"Decision: {decision} Winner: {_friendly_token(winner)}.{suffix}")
+
+
+def _render_evidence_comparison_inline(response: RAGResponse) -> None:
+    comparisons = _claim_comparisons(response)
+    if not comparisons:
+        return
+
+    supported = sum(
+        1
+        for comparison in comparisons
+        if str(comparison.get("winning_source_type") or "") not in {"", "unsupported"}
+    )
+    st.caption(f"Evidence Comparison — {supported}/{len(comparisons)} claims supported")
+
+
+def _claim_comparisons(response: RAGResponse) -> list[dict[str, Any]]:
+    comparisons = (response.diagnostics or {}).get("claim_comparisons") or []
+    if not isinstance(comparisons, list):
+        return []
+    return [item for item in comparisons if isinstance(item, dict)]
+
+
+def _comparison_stream_block(comparison: dict[str, Any], source_type: str) -> str:
+    key = f"{source_type}_support"
+    supports = comparison.get(key) or []
+    title = {"local": "Local", "web": "Web", "ai": "AI"}[source_type]
+    if not supports:
+        return f"**{title}**  \nNot found"
+    best = supports[0]
+    status = _friendly_token(str(best.get("support") or "unclear"))
+    confidence = _score_to_percent(float(best.get("confidence") or 0.0))
+    label = str(best.get("source_label") or title)
+    snippet = str(best.get("snippet") or "").strip()
+    snippet_line = f"  \n{escape(snippet[:180])}" if snippet else ""
+    return f"**{title}**  \n{status} ({confidence}%)  \n`{escape(label)}`{snippet_line}"
 
 
 def _evidence_badges(response: RAGResponse) -> list[str]:

@@ -22,6 +22,8 @@ The main files and their jobs are:
 | `src/verilume/cli.py` | CLI entrypoint. Supports `run`, `ingest`, `stats`, `config`, and `doctor`. |
 | `src/verilume/settings.py` | Loads environment variables and local user settings from `~/.verilume/config.env`. |
 | `src/verilume/ingest.py` | Parses files, normalizes content, chunks text, embeds it, and builds the local Chroma knowledge base. |
+| `src/verilume/core/claim_extraction.py` | Extracts atomic factual claims from final answers for evidence comparison. |
+| `src/verilume/core/evidence_comparison.py` | Compares each claim against local, web, and AI evidence streams. |
 | `src/verilume/core/retrieval.py` | Chroma retriever with dense, lexical, and hybrid retrieval. |
 | `src/verilume/core/query_interpreter.py` | Interprets user intent, follow-up context, source policy, and search preferences. |
 | `src/verilume/core/search_planner.py` | Produces a search plan describing whether local, model knowledge, or web evidence should be used. |
@@ -304,7 +306,37 @@ For web identity evidence, the contamination check reads the source title, URL, 
 
 Identity web results are deduplicated by normalized title after filtering. For example, two `Google Scholar` results for the same person should count as one supporting source, while an authoritative university or conference profile can still survive as the main answer source.
 
-### 6.3 Evidence policies
+### 6.3 Claim-level evidence comparison
+
+After the final answer is selected, Verilume extracts sentence-level factual claims from the answer and compares each claim against the surviving evidence streams:
+
+- local document citations
+- web citations
+- AI model knowledge when it was actually used
+
+The comparison is rule-based in Version 2:
+
+1. Split the answer into atomic factual claims.
+2. Ignore vague helper text, greetings, and stylistic filler.
+3. Compare each claim with local snippets, web snippets, and the model answer using term overlap, entity overlap, source score, and simple negation checks.
+4. Mark each stream as `supports`, `contradicts`, `not_found`, or `unclear`.
+5. Assign a decision such as local wins, web wins, local and web agree, AI-only unverified, or unsupported claim.
+
+The current decision policy follows the same arbitration philosophy as the main answer:
+
+| Situation | Claim-level decision |
+| --- | --- |
+| Local-document question with local support | Local wins. |
+| Current or changing fact with web support | Web wins. |
+| Local and web both support | Local and web agree. |
+| Local supports and AI disagrees | Local wins. |
+| Web supports a current fact and AI disagrees | Web wins. |
+| Only AI supports | Treat as unverified. |
+| No stream supports | Mark as unsupported. |
+
+The Streamlit chat UI shows this in a collapsed `Evidence Comparison` panel below the answer-first summary. Each claim shows Local, Web, and AI status side by side, with a confidence percentage, the best supporting source label, a short snippet, and the final decision.
+
+### 6.4 Evidence policies
 
 The classifier now assigns an explicit evidence policy before final arbitration:
 
@@ -318,7 +350,7 @@ The classifier now assigns an explicit evidence policy before final arbitration:
 
 The local search step still runs first for real knowledge questions. The policy controls arbitration after evidence collection; it does not disable the local database.
 
-### 6.4 Conflict resolution
+### 6.5 Conflict resolution
 
 If evidence disagrees, Verilume tries to resolve the conflict rather than merging everything blindly.
 
@@ -328,7 +360,7 @@ Examples:
 - identity lookups filter out same-name but wrong-person pages and use entity-match scoring before synthesis
 - stale public directory pages are not trusted as current-role evidence
 
-### 6.5 Final synthesis
+### 6.6 Final synthesis
 
 When web evidence is involved, Verilume builds a verified evidence payload and asks the model to synthesize only from that evidence. The model is instructed not to invent facts or citation labels.
 

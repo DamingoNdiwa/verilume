@@ -45,6 +45,10 @@ from verilume.core.evidence import (
     reconcile_dates,
     resolve_evidence_conflicts,
 )
+from verilume.core.evidence_comparison import (
+    claim_comparisons_to_dicts,
+    compare_answer_to_evidence,
+)
 from verilume.core.generation import (
     LOCAL_UNKNOWN,
     MODEL_UNKNOWN,
@@ -3618,6 +3622,7 @@ def _finalize_evidence_diagnostics(
     used_web = bool(used_web_sources)
     used_model = False
     if model_sufficient and _model_answer_available(model_answer):
+        diagnostics["model_answer"] = model_answer
         if not used_local and not used_web:
             used_model = True
         elif _model_answer_aligns_with_answer(model_answer, answer):
@@ -3643,6 +3648,16 @@ def _finalize_evidence_diagnostics(
         diagnostics["evidence_winner"] = "local"
     elif used_model:
         diagnostics["evidence_winner"] = "model_knowledge"
+    diagnostics["claim_comparisons"] = claim_comparisons_to_dicts(
+        compare_answer_to_evidence(
+            answer,
+            local_sources=used_local_sources,
+            web_sources=used_web_sources,
+            model_answer=model_answer if model_sufficient else None,
+            fact_type=diagnostics.get("fact_type"),
+            policy=diagnostics.get("evidence_policy"),
+        )
+    )
 
 
 def _model_answer_aligns_with_answer(model_answer: str | None, answer: str | None) -> bool:

@@ -280,6 +280,7 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertTrue(result.diagnostics["used_local"])
         self.assertTrue(result.diagnostics["used_model_knowledge"])
         self.assertEqual(result.diagnostics["evidence_winner"], "hybrid")
+        self.assertGreaterEqual(len(result.diagnostics.get("claim_comparisons") or []), 1)
         self.assertEqual(len(rag.generator.final_calls), 1)
         self.assertEqual(result.diagnostics["answer_verification_status"], "verified")
 
