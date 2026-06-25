@@ -25,6 +25,7 @@ The main files and their jobs are:
 | `src/verilume/core/agentic_planner.py` | Produces explicit pipeline actions such as local search, model answer, web search, document summarization, table extraction, and calculation. |
 | `src/verilume/core/claim_extraction.py` | Extracts atomic factual claims from final answers for evidence comparison. |
 | `src/verilume/core/evidence_comparison.py` | Compares each claim against local, web, and AI evidence streams. |
+| `src/verilume/core/knowledge_graph.py` | SQLite knowledge graph for people, organizations, locations, topics, publications, documents, and their mentions/relations. |
 | `src/verilume/core/retrieval.py` | Chroma retriever with dense, lexical, and hybrid retrieval. |
 | `src/verilume/core/query_interpreter.py` | Interprets user intent, follow-up context, source policy, and search preferences. |
 | `src/verilume/core/search_planner.py` | Produces a search plan describing whether local, model knowledge, or web evidence should be used. |
@@ -45,6 +46,7 @@ By default, user data is stored in the local user directory:
 - `~/.verilume/ingestion_manifest.json` stores file hashes and ingestion metadata.
 - `~/.verilume/semantic_cache.json` stores reusable evidence-ranked answers.
 - `~/.verilume/tables` stores table metadata and local CSV snapshots for calculation questions.
+- `~/.verilume/knowledge_graph.sqlite` stores local document entities, relations, and mentions.
 - `~/.verilume/config.env` stores local app settings such as tokens and model choices.
 
 This keeps user content outside the repository and makes the app usable as a desktop tool without polluting the project tree.
@@ -280,6 +282,27 @@ The table path works like this:
 6. The answer includes the calculation performed, the column used, the numeric result, and a local `[S#]` citation.
 
 The safety rule is strict: if no matching local table or numeric column is found, Verilume does not invent a number. It falls back to the normal evidence pipeline instead.
+
+### 5.11 Knowledge graph
+
+Verilume now includes a lightweight SQLite knowledge graph for local-document entities and relationships. It is intentionally local and rule-based in this version; Neo4j or LLM extraction can be added later.
+
+The graph stores:
+
+- entities: people, organizations, locations, publications, topics, documents, datasets, methods, and laws
+- relations: authored, coauthored, affiliated_with, mentions, cites, works_at, supervised_by, related_to, published_in, and located_in
+- mentions: document/page/chunk snippets showing where an entity appears
+
+Rule-based extraction currently detects:
+
+- capitalized person names
+- university/institute/department-style organizations
+- DOI/publication markers
+- known methods and topics such as Bayesian inference, Bayesian model selection, Hamiltonian Monte Carlo, regression analysis, spectral analysis, hydrology, statistics, and machine learning
+- document entities and document-to-entity mention edges
+- simple affiliation and supervision patterns
+
+Every edge and mention stores document, page, and chunk metadata when available. The graph can answer structural lookup questions such as which documents mention a person, which topics are linked to a method, or which organizations are connected to a person. GraphRAG uses this in the next layer to improve retrieval before vector search.
 
 ## 6. How Verilume Decides on the Final Answer
 

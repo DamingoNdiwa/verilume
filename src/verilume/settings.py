@@ -389,6 +389,7 @@ def _saved_config_values(
         "SEMANTIC_CACHE_ENTITY_TTL_SECONDS": settings.semantic_cache_entity_ttl_seconds,
         "SEMANTIC_CACHE_LOCAL_TTL_SECONDS": settings.semantic_cache_local_ttl_seconds,
         "TABLE_STORE_DIR": settings.table_store_dir,
+        "KNOWLEDGE_GRAPH_PATH": settings.knowledge_graph_path,
         # Retrieval and UI
         "SHOW_LOCAL_SOURCES": settings.show_local_sources,
         "ANSWER_STYLE": settings.answer_style,
@@ -448,6 +449,7 @@ class AppSettings:
     semantic_cache_entity_ttl_seconds: int = 604800
     semantic_cache_local_ttl_seconds: int = 0
     table_store_dir: Path = DATA_HOME / "tables"
+    knowledge_graph_path: Path = DATA_HOME / "knowledge_graph.sqlite"
 
     # Embeddings
     embed_model: str = "BAAI/bge-small-en-v1.5"
@@ -585,6 +587,12 @@ class AppSettings:
             self,
             "table_store_dir",
             Path(self.table_store_dir).expanduser(),
+        )
+
+        object.__setattr__(
+            self,
+            "knowledge_graph_path",
+            Path(self.knowledge_graph_path).expanduser(),
         )
 
         object.__setattr__(
@@ -969,6 +977,10 @@ class AppSettings:
                 "TABLE_STORE_DIR",
                 defaults.table_store_dir,
             ),
+            knowledge_graph_path=_path(
+                "KNOWLEDGE_GRAPH_PATH",
+                defaults.knowledge_graph_path,
+            ),
             # Embeddings
             embed_model=os.getenv("EMBED_MODEL", defaults.embed_model),
             embed_device=os.getenv("EMBED_DEVICE", defaults.embed_device),
@@ -1339,3 +1351,4 @@ def ensure_app_dirs(settings: AppSettings) -> None:
     settings.manifest_path.parent.mkdir(parents=True, exist_ok=True)
     settings.semantic_cache_path.parent.mkdir(parents=True, exist_ok=True)
     settings.table_store_dir.mkdir(parents=True, exist_ok=True)
+    settings.knowledge_graph_path.parent.mkdir(parents=True, exist_ok=True)
