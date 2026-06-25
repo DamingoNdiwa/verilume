@@ -14,6 +14,7 @@ from verilume.settings import (
     DEFAULT_HF_MODEL_CHOICES,
     DEFAULT_OLLAMA_MODEL_CHOICES,
     GENERATION_BACKEND_LABELS,
+    SEARCH_MODE_CHOICES,
     WEB_SEARCH_PROVIDER_LABELS,
     AppSettings,
     save_user_config,
@@ -81,6 +82,14 @@ def render_sidebar(
         search_expanded = _section_expanded("search", default=False)
 
         with st.expander("Search", expanded=search_expanded):
+            search_mode = st.radio(
+                "Search mode",
+                options=list(SEARCH_MODE_CHOICES),
+                index=list(SEARCH_MODE_CHOICES).index(base_settings.search_mode)
+                if base_settings.search_mode in SEARCH_MODE_CHOICES
+                else 0,
+            )
+
             enable_web_search = st.toggle(
                 "Web search",
                 value=base_settings.enable_web_search,
@@ -102,6 +111,7 @@ def render_sidebar(
 
             selected_provider = provider_keys[provider_labels.index(selected_provider_label)]
 
+            overrides["search_mode"] = search_mode
             overrides["enable_web_search"] = enable_web_search
             overrides["web_search_provider"] = selected_provider
 

@@ -121,6 +121,37 @@ ANSWER_STYLE_ALIASES = {
 }
 
 
+SEARCH_MODE_CHOICES = (
+    "Auto",
+    "Local Only",
+    "Local + AI",
+    "Local + AI + Web",
+    "Web Only",
+    "Research Mode",
+)
+
+SEARCH_MODE_ALIASES = {
+    "auto": "Auto",
+    "default": "Auto",
+    "local": "Local Only",
+    "local_only": "Local Only",
+    "local files": "Local Only",
+    "local_ai": "Local + AI",
+    "local + ai": "Local + AI",
+    "local_plus_ai": "Local + AI",
+    "local_ai_web": "Local + AI + Web",
+    "local + ai + web": "Local + AI + Web",
+    "local_plus_ai_plus_web": "Local + AI + Web",
+    "hybrid": "Local + AI + Web",
+    "web": "Web Only",
+    "web_only": "Web Only",
+    "web only": "Web Only",
+    "research": "Research Mode",
+    "research_mode": "Research Mode",
+    "research mode": "Research Mode",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class AnswerStyleProfile:
     name: str
@@ -277,6 +308,12 @@ def normalize_answer_style(style: str) -> str:
     return ANSWER_STYLE_ALIASES.get(key, "Standard")
 
 
+def normalize_search_mode(mode: str) -> str:
+    raw = (mode or "").strip().lower()
+    key = raw.replace("-", "_").replace(" ", "_")
+    return SEARCH_MODE_ALIASES.get(key, SEARCH_MODE_ALIASES.get(raw, "Auto"))
+
+
 # ############################################################
 # Save local user config
 # ############################################################
@@ -347,6 +384,7 @@ def _saved_config_values(
         # Retrieval and UI
         "SHOW_LOCAL_SOURCES": settings.show_local_sources,
         "ANSWER_STYLE": settings.answer_style,
+        "SEARCH_MODE": settings.search_mode,
         "RETRIEVER_K": settings.retriever_k,
         "RETRIEVAL_SCORE_THRESHOLD": settings.retrieval_score_threshold,
         "ENABLE_QUERY_REWRITE": settings.enable_query_rewrite,
@@ -389,6 +427,7 @@ class AppSettings:
     max_chat_messages: int = 30
     show_local_sources: bool = True
     answer_style: str = "Standard"
+    search_mode: str = "Auto"
 
     # Storage
     docs_dir: Path = DATA_HOME / "documents"
@@ -525,6 +564,11 @@ class AppSettings:
             self,
             "answer_style",
             normalize_answer_style(str(self.answer_style)),
+        )
+        object.__setattr__(
+            self,
+            "search_mode",
+            normalize_search_mode(str(self.search_mode)),
         )
 
         object.__setattr__(
@@ -838,6 +882,10 @@ class AppSettings:
             answer_style=os.getenv(
                 "ANSWER_STYLE",
                 defaults.answer_style,
+            ),
+            search_mode=os.getenv(
+                "SEARCH_MODE",
+                defaults.search_mode,
             ),
             # Storage
             docs_dir=_path("DOCS_DIR", defaults.docs_dir),

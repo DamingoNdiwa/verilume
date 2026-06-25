@@ -216,9 +216,8 @@ def _render_message(
 def _render_answer(response: RAGResponse, key_prefix: str) -> None:
     recommendation = _recommendation_for_response(response, key_prefix)
     if recommendation is None:
-        _render_answer_origin(response)
-        _render_evidence_badges(response)
         st.markdown(_display_answer(response))
+        _render_evidence_summary(response)
         return
     _render_recommendation(**recommendation)
 
@@ -273,6 +272,52 @@ def _render_evidence_badges(response: RAGResponse) -> None:
         f'<div class="veri-evidence-badges">{rendered}</div>',
         unsafe_allow_html=True,
     )
+
+
+def _render_evidence_summary(response: RAGResponse) -> None:
+    origin, confidence, source_type = _answer_origin(response)
+    source_count = _supporting_source_count(response)
+    source_count_label = _supporting_source_count_label(source_count)
+    badges = [origin, f"Confidence: {confidence}", source_type]
+    if source_count_label:
+        badges.append(source_count_label)
+    badges.extend(_evidence_badges(response)[1:])
+    rendered_badges = "".join(f"<span>{escape(label)}</span>" for label in badges if label)
+    strength_rows = _source_strength_rows(response)
+    rendered_strength = "".join(
+        (
+            '<div class="veri-source-strength-row">'
+            f'<span class="veri-source-strength-label">{escape(label)}</span>'
+            '<span class="veri-source-strength-track">'
+            f'<span class="veri-source-strength-fill veri-source-strength-{kind}" style="width:{score}%"></span>'
+            "</span>"
+            f'<span class="veri-source-strength-value">{score}%</span>'
+            "</div>"
+        )
+        for label, score, kind in strength_rows
+    )
+    strength_block = (
+        f'<div class="veri-source-strengths">{rendered_strength}</div>'
+        if rendered_strength
+        else ""
+    )
+    st.markdown(
+        f"""
+<div class="veri-evidence-summary">
+  <div class="veri-evidence-summary-title">Evidence Summary</div>
+  <div class="veri-evidence-summary-badges">{rendered_badges}</div>
+  {strength_block}
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _supporting_source_count_label(source_count: int) -> str:
+    if not source_count:
+        return ""
+    noun = "source" if source_count == 1 else "sources"
+    return f"{source_count} supporting {noun}"
 
 
 def _render_evidence_details(response: RAGResponse) -> None:
@@ -589,6 +634,58 @@ def _supporting_source_count(response: RAGResponse) -> int:
             local_count = 1
     web_count = len(response.web_sources) if _uses_web_search(response) else 0
     return local_count + web_count
+
+
+def _source_strength_rows(response: RAGResponse) -> list[tuple[str, int, str]]:
+    used_local, used_model, used_web = _response_evidence_usage(response)
+    rows: list[tuple[str, int, str]] = []
+    if used_local:
+        rows.append(("Local", _local_strength_percent(response), "local"))
+    if used_web:
+        rows.append(("Web", _web_strength_percent(response), "web"))
+    if used_model:
+        rows.append(("AI", _ai_strength_percent(response), "ai"))
+    return rows
+
+
+def _local_strength_percent(response: RAGResponse) -> int:
+    scores = [float(source.score or 0.0) for source in response.local_sources]
+    if not scores:
+        diagnostic_score = response.diagnostics.get("best_local_score")
+        try:
+            scores = [float(diagnostic_score)]
+        except (TypeError, ValueError):
+            scores = []
+    if not scores:
+        return 72 if response.confidence == "local-grounded" else 45
+    return _score_to_percent(max(scores))
+
+
+def _web_strength_percent(response: RAGResponse) -> int:
+    scores = [float(source.score) for source in response.web_sources if source.score is not None]
+    if scores:
+        return _score_to_percent(max(scores))
+    if response.web_sources:
+        return _confidence_label_to_percent(source_confidence(response.web_sources[0]))
+    return 72 if response.used_web else 45
+
+
+def _ai_strength_percent(response: RAGResponse) -> int:
+    if response.diagnostics.get("model_sufficient") is False:
+        return 48
+    if response.confidence == "model-only":
+        return 72
+    return 68
+
+
+def _score_to_percent(score: float) -> int:
+    if score > 1.0:
+        score = score / (1.0 + score)
+    return max(1, min(100, int(round(score * 100))))
+
+
+def _confidence_label_to_percent(label: str) -> int:
+    return {"High": 91, "Medium": 72, "Low": 45}.get(label, 60)
 
 
 def _is_conversational_response(answer: str) -> bool:

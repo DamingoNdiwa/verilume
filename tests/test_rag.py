@@ -277,6 +277,69 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertEqual(len(rag.generator.final_calls), 1)
         self.assertEqual(result.diagnostics["answer_verification_status"], "verified")
 
+    def test_search_mode_local_only_blocks_model_and_web(self) -> None:
+        local_source = LocalSource(
+            label="S1",
+            document="local.pdf",
+            page=1,
+            chunk_id="local-1",
+            text="Local-only answer text.",
+            score=0.92,
+        )
+        rag = self._make_rag(
+            local_answer="Local-only answer text [S1].",
+            model_answer="Model answer",
+            web_answer="Web answer [W1]",
+            local_sources=[local_source],
+        )
+        rag.settings = AppSettings(hf_token="token", tavily_api_key="key", search_mode="local only")
+
+        result = rag.ask("What is the local answer?")
+
+        self.assertEqual(result.confidence, "local-grounded")
+        self.assertFalse(result.used_web)
+        self.assertEqual(len(rag.generator.model_calls), 0)
+        self.assertEqual(rag.web_search.queries, [])
+        self.assertEqual(result.diagnostics["search_mode_key"], "local_only")
+
+    def test_search_mode_local_ai_blocks_web_but_allows_model(self) -> None:
+        rag = self._make_rag(
+            local_answer=LOCAL_UNKNOWN,
+            model_answer="A stable model answer.",
+            web_answer="Web answer [W1]",
+            local_sources=[],
+        )
+        rag.settings = AppSettings(hf_token="token", tavily_api_key="key", search_mode="local + ai")
+
+        result = rag.ask("What is a stable concept?")
+
+        self.assertEqual(result.confidence, "model-only")
+        self.assertFalse(result.used_web)
+        self.assertEqual(len(rag.generator.model_calls), 1)
+        self.assertEqual(rag.web_search.queries, [])
+        self.assertEqual(result.diagnostics["search_mode_key"], "local_ai")
+
+    def test_search_mode_web_only_skips_local_and_model(self) -> None:
+        rag = self._make_rag(
+            local_answer="Local answer [S1].",
+            model_answer="Model answer",
+            web_answer="Web answer [W1].",
+            local_sources=[LOCAL_SOURCE],
+            web_sources=[
+                WebSource("W1", "Web article", "https://example.com/web", "Web answer."),
+            ],
+        )
+        rag.settings = AppSettings(hf_token="token", tavily_api_key="key", search_mode="web only")
+
+        result = rag.ask("Search this from web only")
+
+        self.assertTrue(result.used_web)
+        self.assertEqual(result.local_sources, [])
+        self.assertEqual(len(rag.generator.local_calls), 0)
+        self.assertEqual(len(rag.generator.model_calls), 0)
+        self.assertGreater(len(rag.web_search.queries), 0)
+        self.assertEqual(result.diagnostics["search_mode_key"], "web_only")
+
     def test_repeated_question_uses_response_cache(self) -> None:
         rag = self._make_rag(local_answer="Local answer [S1]")
 

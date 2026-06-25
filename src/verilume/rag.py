@@ -723,6 +723,7 @@ class VerilumeRAG:
                 query_types=[item.value for item in query_understanding.types],
                 fact_type=query_understanding.fact_type.value,
                 evidence_policy=query_understanding.evidence_policy.value,
+                search_mode=self.settings.search_mode,
                 local_file_question=query_understanding.local_file_question,
                 identity_attribute_question=identity_attribute_local_fact_question,
                 time_sensitive=time_sensitive,
@@ -736,9 +737,22 @@ class VerilumeRAG:
         )
 
         force_web = self._is_web_requested(question)
+        search_mode = _search_mode_key(self.settings)
+        allow_local_search = _search_mode_allows_local(search_mode)
+        allow_model_knowledge = _search_mode_allows_model(search_mode)
+        allow_web_search = _search_mode_allows_web(search_mode)
+        force_hybrid_web = search_mode in {"local_ai_web", "research", "web_only"}
+        diagnostics["search_mode_key"] = search_mode
+        diagnostics["search_mode_allows_local"] = allow_local_search
+        diagnostics["search_mode_allows_model"] = allow_model_knowledge
+        diagnostics["search_mode_allows_web"] = allow_web_search
         planned_web = search_plan.need_web
-        web_ready = bool(self.settings.enable_web_search and getattr(self.web_search, "is_configured", True))
-        current_or_web = bool(force_web or time_sensitive or (planned_web and not search_plan.need_local))
+        web_ready = bool(
+            self.settings.enable_web_search
+            and allow_web_search
+            and getattr(self.web_search, "is_configured", True)
+        )
+        current_or_web = bool(force_web or time_sensitive or force_hybrid_web or (planned_web and not search_plan.need_local))
         expanded_web_queries = _web_queries(question, query, search_plan)
         if search_plan.intent == "government":
             web_queries = _dedupe_web_queries([*expanded_web_queries, *semantic_plan.search_queries])
@@ -750,8 +764,8 @@ class VerilumeRAG:
             query_understanding,
             local_file_search_question,
         )
-        skip_local_retrieval = False
-        diagnostics["local_retrieval_forced_by_policy"] = bool(not search_plan.need_local)
+        skip_local_retrieval = not allow_local_search
+        diagnostics["local_retrieval_forced_by_policy"] = bool(not search_plan.need_local and allow_local_search)
         diagnostics["local_retrieval_policy_would_skip"] = planned_skip_local_retrieval
         local_queries = _local_search_queries(query, identity_tokens, local_file_search_question)
         diagnostics["local_queries"] = local_queries
@@ -903,6 +917,36 @@ class VerilumeRAG:
                 )
                 return _attach_conversation_state(response, conversation.state, original_question, question)
 
+        if search_mode == "local_only":
+            _emit_stage(on_stage, "Using local-only search mode...")
+            answer = local_answer if local_sufficient else _local_file_evidence_answer(local_sources)
+            used_local_sources = _local_sources_used_in_answer(local_sources, answer) or local_sources
+            if used_local_sources:
+                _finalize_evidence_diagnostics(
+                    diagnostics,
+                    answer=answer,
+                    used_local_sources=used_local_sources,
+                    used_web_sources=[],
+                    model_answer=None,
+                    model_sufficient=False,
+                )
+                response = RAGResponse(
+                    answer,
+                    used_local_sources,
+                    [],
+                    False,
+                    "local-grounded",
+                    diagnostics,
+                )
+            else:
+                diagnostics["used_local"] = True
+                diagnostics["used_model_knowledge"] = False
+                diagnostics["used_web"] = False
+                diagnostics["evidence_streams"] = ["local"]
+                diagnostics["evidence_winner"] = "local"
+                response = RAGResponse(LOCAL_FILE_NOT_FOUND, [], [], False, "low", diagnostics)
+            return _attach_conversation_state(response, conversation.state, original_question, question)
+
         web_sources: list[WebSource] = []
         web_error = ""
         model_answer = MODEL_UNKNOWN
@@ -917,6 +961,7 @@ class VerilumeRAG:
         diagnostics["prefer_local_answer"] = prefer_local_answer
         standard_static_web = bool(
             self.settings.enable_web_search
+            and allow_web_search
             and not current_web_validation
             and not local_file_answer_question
             and not local_sufficient
@@ -924,13 +969,15 @@ class VerilumeRAG:
         should_use_web = (
             _should_use_web(
                 question=question,
-                force_web=force_web or planned_web,
-                web_enabled=self.settings.enable_web_search,
+                force_web=force_web or planned_web or force_hybrid_web,
+                web_enabled=self.settings.enable_web_search and allow_web_search,
                 query_understanding=query_understanding,
             )
             or standard_static_web
             or bool(generation_error and web_ready)
         )
+        if search_mode in {"local_only", "local_ai"}:
+            should_use_web = False
         if standard_static_web and not (force_web or planned_web):
             diagnostics["web_reason"] = "standard_static_hybrid"
         elif prefer_local_answer and should_use_web:
@@ -958,7 +1005,9 @@ class VerilumeRAG:
                 _emit_stage(on_stage, "Checking current web evidence...")
             else:
                 _emit_stage(on_stage, "Checking AI knowledge and web evidence...")
-            use_model_with_web = bool(not generation_error and not current_web_validation)
+            use_model_with_web = bool(
+                allow_model_knowledge and not generation_error and not current_web_validation
+            )
             diagnostics["parallel_model_with_web"] = use_model_with_web
             diagnostics["model_skipped_for_current_web"] = bool(
                 current_web_validation and not generation_error
@@ -1005,7 +1054,7 @@ class VerilumeRAG:
                         diagnostics["generation_error_confidence"] = _generation_error_confidence(generation_error)
                     except Exception as exc:
                         diagnostics["model_error"] = _clean_error_message(exc)
-        elif not generation_error:
+        elif not generation_error and allow_model_knowledge:
             if current_web_validation:
                 diagnostics["model_skipped_for_current_web"] = True
                 diagnostics["parallel_model_with_web"] = False
@@ -1021,10 +1070,13 @@ class VerilumeRAG:
                     diagnostics["generation_error_confidence"] = _generation_error_confidence(generation_error)
                 except Exception as exc:
                     diagnostics["model_error"] = _clean_error_message(exc)
+        elif not allow_model_knowledge:
+            diagnostics["model_skipped_by_search_mode"] = True
         if (
             not should_use_web
             and not local_sufficient
             and self.settings.enable_web_search
+            and allow_web_search
             and (generation_error or not model_sufficient)
         ):
             should_use_web = True
@@ -3348,6 +3400,38 @@ def _scientific_local_queries(query: str) -> list[str]:
 
 def _setting(settings: AppSettings, name: str, default):
     return getattr(settings, name, default)
+
+
+def _search_mode_key(settings: AppSettings) -> str:
+    value = str(getattr(settings, "search_mode", "Auto") or "Auto").strip().lower()
+    value = value.replace("+", " ").replace("-", " ").replace("_", " ")
+    value = re.sub(r"\s+", " ", value)
+    return {
+        "auto": "auto",
+        "local only": "local_only",
+        "local": "local_only",
+        "local ai": "local_ai",
+        "local model": "local_ai",
+        "local ai web": "local_ai_web",
+        "local model web": "local_ai_web",
+        "hybrid": "local_ai_web",
+        "web only": "web_only",
+        "web": "web_only",
+        "research mode": "research",
+        "research": "research",
+    }.get(value, "auto")
+
+
+def _search_mode_allows_local(mode: str) -> bool:
+    return mode != "web_only"
+
+
+def _search_mode_allows_model(mode: str) -> bool:
+    return mode not in {"local_only", "web_only"}
+
+
+def _search_mode_allows_web(mode: str) -> bool:
+    return mode not in {"local_only", "local_ai"}
 
 
 def _best_local_score(local_sources: Sequence[LocalSource]) -> float:

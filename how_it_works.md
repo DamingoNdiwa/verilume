@@ -181,6 +181,23 @@ These are answered strictly from local indexed files. AI knowledge and web searc
 
 If the user names a specific local filename such as `slides-smoke.pptx` or `scanned-smoke.pdf`, that filename is now preserved as an anchor during local ranking and filtering. This matters for short OCR chunks, where the document name may be the strongest signal.
 
+### 5.7 Search modes
+
+The sidebar now exposes a `Search mode` control for users who want more control than Auto routing.
+
+The modes are:
+
+| Mode | Behavior |
+| --- | --- |
+| `Auto` | Default local-first routing. Local is searched first, AI knowledge is used for stable support, and web is used when enabled, requested, or needed by the evidence policy. |
+| `Local Only` | Searches indexed local files and blocks model knowledge and web search for that turn. |
+| `Local + AI` | Searches local files and allows AI knowledge, but blocks web search. |
+| `Local + AI + Web` | Forces the full hybrid local/model/web path when web search is configured. |
+| `Web Only` | Skips local and model evidence and answers from web evidence only when web search is configured. |
+| `Research Mode` | Uses the full hybrid path and is intended for source-heavy answers and broader evidence collection. |
+
+Auto remains the default because it preserves the local-first safety model. The explicit modes are user controls; they should not be used by the classifier as hidden defaults.
+
 ## 6. How Verilume Decides on the Final Answer
 
 The final answer is chosen by combining several stages.
@@ -313,7 +330,22 @@ This is especially important when the system has to decide whether the final ans
 
 ## 8. How the App Labels Results
 
-The UI labels answers based on which evidence streams actually survived into the final answer.
+The UI renders the answer first. Evidence metadata is intentionally placed below the answer so the user does not have to read badges before the conclusion.
+
+The answer layout is:
+
+1. Direct answer text.
+2. Evidence Summary with source type, confidence, source count, agreement/freshness notes, and source-strength bars.
+3. Expandable evidence analysis.
+4. Local document citations and web source groups.
+
+The source-strength bars are derived from the evidence streams that survived final arbitration:
+
+- Local strength uses the best local retrieval score or local confidence fallback.
+- Web strength uses the best web source score or domain/source confidence fallback.
+- AI strength is shown only when model knowledge actually contributed.
+
+Typical source labels are:
 
 Typical outcomes are:
 
@@ -326,6 +358,8 @@ Typical outcomes are:
 | `Current Information` | The answer is time-sensitive and validated through current evidence. |
 
 The internal diagnostics also track whether the final answer used local evidence, model knowledge, web evidence, or a hybrid of these streams.
+
+The source tree groups web evidence by source type, such as Government, University, Research, News, Social, and general Web sources. Local document citations remain separate and include page/document metadata.
 
 ## 9. Current Search Decision Rules in Plain English
 
@@ -343,7 +377,27 @@ The practical answer policy is:
 10. The final answer is selected by ranking the surviving local, model, and web evidence streams rather than blindly trusting whichever stream ran last.
 11. Never allow unsupported citations or obviously wrong same-name identity pages to decide the answer.
 
-## 10. How to Install and Run the macOS App Now
+## 10. Roadmap From Current Suggestions
+
+Several suggested improvements are now partially implemented and documented, while others are intentionally roadmap-sized:
+
+| Suggestion | Current status |
+| --- | --- |
+| Answer before metadata | Implemented. The answer now appears before the Evidence Summary. |
+| Search modes | Implemented in settings, sidebar, and RAG routing. |
+| Source confidence bars | Implemented in the Evidence Summary for Local, Web, and AI streams. |
+| Progressive generation stages | Partially implemented through the Streamlit evidence-collection status log. More granular streaming token output is still future work. |
+| Entity verification | Implemented for person/company evidence filtering and entity-match scoring; still the top retrieval quality priority. |
+| Duplicate clustering | Partially handled by URL/source merging; semantic duplicate clustering across mirrors is future work. |
+| Multi-document summarisation | Current implementation can browse one representative source per indexed document. Persisted document summaries for summary-first retrieval are future work. |
+| Two-stage document then chunk retrieval | Future retrieval improvement. |
+| Document explorer | Future UI feature. |
+| Clickable page-level highlights | Future citation UX feature. |
+| Search suggestions/autocomplete | Future UI feature. |
+| Preference memory | Future conversation/profile feature. |
+| Anonymous latency analytics | Future opt-in diagnostics feature. |
+
+## 11. How to Install and Run the macOS App Now
 
 There are two practical macOS paths today.
 
@@ -381,7 +435,7 @@ After building:
 2. On first launch, macOS may require right-click then `Open`.
 3. Enter your Hugging Face token and optional web provider key in the sidebar.
 
-## 11. How to Install the Python Package Later
+## 12. How to Install the Python Package Later
 
 ### Install from GitHub now
 
@@ -423,7 +477,7 @@ python -m pip install verilume
 verilume run
 ```
 
-## 12. How the Package Will Be Published
+## 13. How the Package Will Be Published
 
 The package metadata already lives in `pyproject.toml` and exposes the CLI entrypoint `verilume = verilume.cli:main`.
 
@@ -439,7 +493,7 @@ python -m twine upload dist/*
 
 After publication, GitHub can remain the source repository while PyPI becomes the installation source for end users.
 
-## 13. Useful Commands
+## 14. Useful Commands
 
 ```bash
 verilume run
@@ -452,7 +506,7 @@ verilume doctor
 
 `verilume doctor` is the fastest health check. It reports whether the docs directory exists, whether Chroma exists, whether the manifest exists, whether tokens are configured, and how many chunks are indexed.
 
-## 14. Short Summary
+## 15. Short Summary
 
 Verilume is implemented as a local-first evidence system, not just a chat wrapper around an LLM.
 

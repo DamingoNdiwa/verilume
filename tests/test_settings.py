@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from verilume.core.generation import HuggingFaceGenerator, OllamaGenerator, create_generator
-from verilume.settings import AppSettings, save_user_config
+from verilume.settings import AppSettings, normalize_search_mode, save_user_config
 
 
 class AppSettingsTests(unittest.TestCase):
@@ -42,6 +42,7 @@ class AppSettingsTests(unittest.TestCase):
             confidence_high_threshold=4,
             confidence_medium_threshold=-1,
             answer_style="academic",
+            search_mode="local_ai_web",
             hf_provider="   ",
         )
 
@@ -75,6 +76,13 @@ class AppSettingsTests(unittest.TestCase):
         self.assertEqual(settings.confidence_high_threshold, 1.0)
         self.assertEqual(settings.confidence_medium_threshold, 0.0)
         self.assertEqual(settings.answer_style, "Research")
+        self.assertEqual(settings.search_mode, "Local + AI + Web")
+
+    def test_search_mode_aliases_are_normalized(self) -> None:
+        self.assertEqual(normalize_search_mode("web only"), "Web Only")
+        self.assertEqual(normalize_search_mode("research_mode"), "Research Mode")
+        self.assertEqual(normalize_search_mode("local + ai"), "Local + AI")
+        self.assertEqual(normalize_search_mode("unknown"), "Auto")
 
     def test_web_provider_secrets_are_masked(self) -> None:
         settings = AppSettings(
@@ -109,6 +117,7 @@ class AppSettingsTests(unittest.TestCase):
                     web_search_provider="brave",
                     brave_api_key="brave-secret",
                     answer_style="short",
+                    search_mode="web only",
                 ),
                 path=path,
             )
@@ -120,6 +129,7 @@ class AppSettingsTests(unittest.TestCase):
         self.assertIn('WEB_SEARCH_PROVIDER="brave"', content)
         self.assertIn('BRAVE_API_KEY="brave-secret"', content)
         self.assertIn('ANSWER_STYLE="Short"', content)
+        self.assertIn('SEARCH_MODE="Web Only"', content)
 
     def test_hugging_face_backend_is_selected(self) -> None:
         settings = AppSettings(

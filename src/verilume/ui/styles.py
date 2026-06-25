@@ -350,6 +350,81 @@ h1, h2, h3 {
   padding: .3rem .55rem;
 }
 
+.veri-evidence-summary {
+  border-top: 1px solid rgba(43, 48, 58, .75);
+  margin: .95rem 0 .85rem 0;
+  padding-top: .72rem;
+}
+
+.veri-evidence-summary-title {
+  color: var(--veri-muted);
+  font-size: .78rem;
+  font-weight: 800;
+  letter-spacing: .08rem;
+  margin-bottom: .48rem;
+  text-transform: uppercase;
+}
+
+.veri-evidence-summary-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  margin-bottom: .62rem;
+}
+
+.veri-evidence-summary-badges span {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(255, 200, 87, .28);
+  border-radius: 999px;
+  background: rgba(255, 200, 87, .08);
+  color: #ffe3a3;
+  font-size: .76rem;
+  font-weight: 720;
+  line-height: 1.2;
+  padding: .3rem .55rem;
+}
+
+.veri-source-strengths {
+  display: grid;
+  gap: .38rem;
+  max-width: 460px;
+}
+
+.veri-source-strength-row {
+  align-items: center;
+  display: grid;
+  gap: .55rem;
+  grid-template-columns: 3.8rem minmax(7rem, 1fr) 3rem;
+}
+
+.veri-source-strength-label,
+.veri-source-strength-value {
+  color: var(--veri-muted);
+  font-size: .78rem;
+  font-weight: 720;
+}
+
+.veri-source-strength-value {
+  text-align: right;
+}
+
+.veri-source-strength-track {
+  background: rgba(43, 48, 58, .78);
+  border-radius: 999px;
+  height: .5rem;
+  overflow: hidden;
+}
+
+.veri-source-strength-fill {
+  display: block;
+  height: 100%;
+}
+
+.veri-source-strength-local { background: #6ee7a8; }
+.veri-source-strength-web { background: #7cc7ff; }
+.veri-source-strength-ai { background: #c8a7ff; }
+
 .veri-history-label {
   margin: 1rem 0 .65rem 0;
   color: var(--veri-muted);

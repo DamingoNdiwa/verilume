@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from verilume.core.generation import LOCAL_UNKNOWN, MODEL_UNKNOWN
+from verilume.core.generation import LOCAL_UNKNOWN
 from verilume.core.schemas import LocalSource, WebSource
 from verilume.rag import VerilumeRAG
 from verilume.settings import AppSettings

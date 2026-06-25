@@ -20,6 +20,7 @@ from verilume.ui.chat import (
     _render_sources,
     _recommendation_for_response,
     _regeneration_plan,
+    _source_strength_rows,
     _supporting_source_count,
 )
 from verilume.utils.exporting import chat_to_markdown
@@ -412,6 +413,31 @@ class ChatInteractionTests(unittest.TestCase):
         self.assertEqual(rows["Evidence note"], "Local files win for private facts.")
         self.assertEqual(rows["Freshness note"], "Freshness was not decisive.")
         self.assertEqual(rows["Local older than web"], "No")
+
+    def test_source_strength_rows_show_local_web_and_ai_percentages(self) -> None:
+        response = RAGResponse(
+            answer="Answer [S1] [W1]",
+            local_sources=[
+                LocalSource("S1", "doc.pdf", 1, "chunk", "local", 0.95),
+            ],
+            web_sources=[
+                WebSource("W1", "University", "https://www.uni.lu/article", "web", score=0.88),
+            ],
+            used_web=True,
+            confidence="local-web-assisted",
+            diagnostics={
+                "used_local": True,
+                "used_web": True,
+                "used_model_knowledge": True,
+                "model_sufficient": True,
+            },
+        )
+
+        rows = _source_strength_rows(response)
+
+        self.assertEqual(rows[0], ("Local", 95, "local"))
+        self.assertEqual(rows[1], ("Web", 88, "web"))
+        self.assertEqual(rows[2], ("AI", 68, "ai"))
 
     def test_web_source_rows_are_grouped_by_source_type(self) -> None:
         rows = [
