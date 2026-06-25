@@ -268,6 +268,10 @@ For person lookups, private identity-document chunks such as passports are demot
 
 Person lookups also use entity verification before final synthesis. If the query is a bare person name such as `Christophe Ley`, local and web evidence must actually match that queried person. Chunks that foreground a different named person, such as `Gabriella Vinco`, are discarded even if they mention the queried name incidentally. Coursework, regression exercises, invoices, certificates, and other non-profile documents are treated as negative identity context unless the question is explicitly about those documents.
 
+For web identity evidence, the contamination check reads the source title, URL, and content together. This prevents search-result pollution where a page about one person survives only because the queried name appears somewhere in the snippet. Entity lookup fallbacks also synthesize a short answer from the evidence text or affiliation phrase instead of using a source heading such as "Author Details" as the answer.
+
+Identity web results are deduplicated by normalized title after filtering. For example, two `Google Scholar` results for the same person should count as one supporting source, while an authoritative university or conference profile can still survive as the main answer source.
+
 ### 6.3 Evidence policies
 
 The classifier now assigns an explicit evidence policy before final arbitration:
@@ -387,8 +391,8 @@ Several suggested improvements are now partially implemented and documented, whi
 | Search modes | Implemented in settings, sidebar, and RAG routing. |
 | Source confidence bars | Implemented in the Evidence Summary for Local, Web, and AI streams. |
 | Progressive generation stages | Partially implemented through the Streamlit evidence-collection status log. More granular streaming token output is still future work. |
-| Entity verification | Implemented for person/company evidence filtering and entity-match scoring; still the top retrieval quality priority. |
-| Duplicate clustering | Partially handled by URL/source merging; semantic duplicate clustering across mirrors is future work. |
+| Entity verification | Implemented for person/company evidence filtering, web title/content/URL contamination checks, and entity-match scoring; still the top retrieval quality priority. |
+| Duplicate clustering | Implemented for exact URL/source merging and normalized-title clustering in identity web results. Broader semantic clustering across mirrors is future work. |
 | Multi-document summarisation | Current implementation can browse one representative source per indexed document. Persisted document summaries for summary-first retrieval are future work. |
 | Two-stage document then chunk retrieval | Future retrieval improvement. |
 | Document explorer | Future UI feature. |

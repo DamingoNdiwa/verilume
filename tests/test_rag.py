@@ -2309,6 +2309,76 @@ class RAGRoutingTests(unittest.TestCase):
         self.assertNotIn("[S1]", result.answer)
         self.assertNotIn("course notes", result.answer.lower())
 
+    def test_identity_lookup_synthesizes_answer_and_filters_wrong_person_results(self) -> None:
+        incidental_local = LocalSource(
+            label="S1",
+            document="Sproochentest.pdf",
+            page=4,
+            chunk_id="language-test-mention",
+            text=(
+                "About the authors. Florian Felice appears in a Sproochentest "
+                "practice example, but this page is a language exam exercise."
+            ),
+            score=0.98,
+        )
+        rag = self._make_rag(
+            local_answer="Florian Felice appears in Sproochentest material [S1].",
+            model_answer=MODEL_UNKNOWN,
+            local_sources=[incidental_local],
+            web_sources=[
+                WebSource(
+                    label="W1",
+                    title="Author Details - Open Conference Systems",
+                    url="https://meeting.example.org/index/search/authors/view?firstName=Florian&lastName=Felice",
+                    content=(
+                        "Author Details - Open Conference Systems. Felice, Florian, "
+                        "University of Luxembourg, Luxembourg. CLADAG2023 conference author."
+                    ),
+                    score=0.91,
+                ),
+                WebSource(
+                    label="W2",
+                    title="Felice Feliciano Antiquarius | The British Academy",
+                    url="https://www.example.org/proceedings/47/mitchell",
+                    content=(
+                        "The British Academy 47, 1961. Felice Feliciano Antiquarius. "
+                        "Search result also mentions Florian Felice as a nearby query term."
+                    ),
+                    score=0.88,
+                ),
+                WebSource(
+                    label="W3",
+                    title="Florian Felice - Google Scholar",
+                    url="https://scholar.example.com/citations?user=abc",
+                    content="Florian Felice Google Scholar profile.",
+                    score=0.83,
+                ),
+                WebSource(
+                    label="W4",
+                    title="Florian Felice - Google Scholar",
+                    url="https://scholar.example.net/citations?user=abc",
+                    content="Florian Felice Google Scholar profile mirror.",
+                    score=0.79,
+                ),
+            ],
+        )
+
+        result = rag.ask("Florian Felice")
+
+        self.assertEqual(result.local_sources, [])
+        self.assertTrue(result.used_web)
+        self.assertIn("Florian Felice", result.answer)
+        self.assertIn("University of Luxembourg", result.answer)
+        self.assertIn("[W1]", result.answer)
+        self.assertNotIn("[S1]", result.answer)
+        self.assertNotIn("Sproochentest", result.answer)
+        self.assertNotIn("Felice Feliciano", result.answer)
+        self.assertFalse(result.answer.startswith("Author Details"))
+        scholar_sources = [
+            source for source in result.web_sources if "Google Scholar" in source.title
+        ]
+        self.assertLessEqual(len(scholar_sources), 1)
+
     def test_reversed_name_identity_lookup_can_fall_back_to_strong_local_profile_evidence(self) -> None:
         local_profile = LocalSource(
             label="S1",
@@ -2389,7 +2459,8 @@ class RAGRoutingTests(unittest.TestCase):
         result = rag.ask("Christophe ley")
 
         self.assertTrue(result.used_web)
-        self.assertIn("Luxembourgish statistician", result.answer)
+        self.assertIn("Christophe Ley", result.answer)
+        self.assertRegex(result.answer, r"University of Luxembourg|Luxembourgish statistician")
         self.assertNotIn("Recreation, Parks & Tourism", result.answer)
         self.assertFalse(
             any("Recreation, Parks & Tourism" in source.title for source in result.web_sources)

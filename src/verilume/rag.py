@@ -4131,7 +4131,37 @@ def _filter_web_sources_for_identity(sources, identity_tokens):
         for source in filtered
         if _identity_web_source_is_relevant(source, dominant_terms)
     ]
-    return _relabel_web_sources(relevant or filtered)
+    return _relabel_web_sources(_dedupe_identity_web_sources(relevant or filtered))
+
+
+def _dedupe_identity_web_sources(sources: Sequence[WebSource]) -> list[WebSource]:
+    best_by_key: dict[str, WebSource] = {}
+    order: list[str] = []
+    for source in sources:
+        key = _identity_web_dedupe_key(source)
+        if not key:
+            continue
+        previous = best_by_key.get(key)
+        if previous is None:
+            order.append(key)
+            best_by_key[key] = source
+            continue
+        if _web_source_dedupe_score(source) > _web_source_dedupe_score(previous):
+            best_by_key[key] = source
+    return [best_by_key[key] for key in order]
+
+
+def _identity_web_dedupe_key(source: WebSource) -> str:
+    title = re.sub(r"[^a-z0-9]+", " ", (source.title or "").lower()).strip()
+    title = re.sub(
+        r"\b(?:author details|profile|profiles|google scholar|researchgate|linkedin)\b",
+        " ",
+        title,
+    )
+    title = re.sub(r"\s+", " ", title).strip()
+    if title:
+        return f"title::{title[:140]}"
+    return _web_source_key(source)
 
 
 def _identity_web_dominant_terms(sources) -> set[str]:
@@ -4222,13 +4252,18 @@ def _identity_local_source_is_relevant(source, identity_tokens, *, strict_lookup
 
     signal_text = _strip_negated_identity_profile_markers(text)
     has_strong_signal = any(marker in signal_text for marker in IDENTITY_LOCAL_STRONG_MARKERS)
+    has_specific_strong_signal = any(
+        marker in signal_text
+        for marker in IDENTITY_LOCAL_STRONG_MARKERS
+        if marker not in {"about", "author"}
+    )
     has_context_signal = any(marker in text for marker in IDENTITY_LOCAL_CONTEXT_MARKERS)
     has_negative_signal = any(marker in text for marker in IDENTITY_LOCAL_NEGATIVE_MARKERS)
     document_has_identity = all(_fold_identity_token(token) in document for token in identity_tokens)
 
     if partial_identity_fact:
         return True
-    if has_negative_signal and not has_strong_signal:
+    if has_negative_signal and not (has_specific_strong_signal or document_has_identity):
         return False
     if document_has_identity:
         return True
@@ -4240,23 +4275,72 @@ def _identity_local_source_is_relevant(source, identity_tokens, *, strict_lookup
 
 
 def _identity_source_has_contaminating_entity(source, identity_tokens) -> bool:
-    raw_text = f"{getattr(source, 'document', '')} {getattr(source, 'text', '')}"
+    raw_text = _identity_source_raw_text(source)
+    prominent_text = _identity_source_prominent_text(source)
     folded = _fold_text(raw_text)
+    prominent_folded = _fold_text(prominent_text)
     query_name = " ".join(_fold_identity_token(token) for token in identity_tokens)
     reversed_query_name = " ".join(reversed(query_name.split()))
-    if _identity_phrase_present(folded, query_name) or _identity_phrase_present(folded, reversed_query_name):
+    query_present = _identity_phrase_present(folded, query_name) or _identity_phrase_present(
+        folded,
+        reversed_query_name,
+    )
+    prominent_query_present = _identity_phrase_present(
+        prominent_folded,
+        query_name,
+    ) or _identity_phrase_present(prominent_folded, reversed_query_name)
+    prominent_names = _candidate_person_names(prominent_text)
+    query_token_set = {_fold_identity_token(token) for token in identity_tokens}
+    if prominent_names and not prominent_query_present:
+        for name in prominent_names:
+            if not _candidate_name_matches_identity(name, query_token_set):
+                return True
+    if prominent_query_present:
+        return False
+    if query_present:
         return False
     names = _candidate_person_names(raw_text)
-    query_token_set = {_fold_identity_token(token) for token in identity_tokens}
     for name in names:
-        name_tokens = set(name.split())
-        overlap = len(name_tokens & query_token_set)
-        tolerated_overlap = min(2, len(name_tokens), len(query_token_set))
-        if name_tokens and overlap >= tolerated_overlap:
+        if _candidate_name_matches_identity(name, query_token_set):
             continue
-        if name_tokens:
+        if name.split():
             return True
     return False
+
+
+def _candidate_name_matches_identity(name: str, query_token_set: set[str]) -> bool:
+    name_tokens = set(name.split())
+    overlap = len(name_tokens & query_token_set)
+    tolerated_overlap = min(2, len(name_tokens), len(query_token_set))
+    return bool(name_tokens and overlap >= tolerated_overlap)
+
+
+def _identity_source_raw_text(source) -> str:
+    return " ".join(
+        _unique_nonempty(
+            [
+                getattr(source, "document", ""),
+                getattr(source, "title", ""),
+                getattr(source, "text", ""),
+                getattr(source, "content", ""),
+                getattr(source, "url", ""),
+            ]
+        )
+    )
+
+
+def _identity_source_prominent_text(source) -> str:
+    content = getattr(source, "content", "") or ""
+    return " ".join(
+        _unique_nonempty(
+            [
+                getattr(source, "document", ""),
+                getattr(source, "title", ""),
+                content[:320],
+                getattr(source, "url", ""),
+            ]
+        )
+    )
 
 
 def _identity_phrase_present(text: str, phrase: str) -> bool:
@@ -4277,14 +4361,26 @@ def _candidate_person_names(text: str) -> set[str]:
             continue
         if lowered & {
             "applied",
+            "associate",
+            "author",
             "birth",
+            "conference",
             "date",
+            "details",
+            "doctoral",
             "forecasting",
+            "google",
             "name",
+            "open",
             "passport",
+            "professor",
             "republic",
+            "researcher",
             "sample",
+            "scholar",
+            "senior",
             "series",
+            "systems",
             "time",
             "university",
             "luxembourg",
@@ -6083,15 +6179,16 @@ def _fact_from_item(item, terms):
 
 
 def _extractive_answer_lines(question, evidence_items, terms):
-    if _identity_tokens(question):
-        subject = _compact_source_text(question.strip(" ?!."), limit=80)
+    identity_tokens = _identity_tokens(question)
+    if identity_tokens:
+        subject = _identity_display_name(question, evidence_items, identity_tokens)
         best = evidence_items[0]
-        first_description = _compact_source_text(_useful_evidence_text(best, terms), limit=280)
-        lines = [f"{subject}: {first_description} {best.citation()}"]
+        first_description = _identity_fact_text_from_item(best, terms, identity_tokens, subject)
+        lines = [f"{first_description} {best.citation()}"]
         if len(evidence_items) > 1:
             lines.extend(("", "Additional relevant sources:"))
             for item in evidence_items[1:4]:
-                description = _compact_source_text(_useful_evidence_text(item, terms), limit=220)
+                description = _identity_supporting_source_text(item, terms, identity_tokens, subject)
                 lines.append(f"- {description} {item.citation()}")
         return lines
 
@@ -6111,6 +6208,131 @@ def _useful_evidence_text(item, terms):
     if sentence and sentence.lower() != title.lower():
         return f"{title}: {sentence}" if title else sentence
     return title or content
+
+
+def _identity_display_name(question, evidence_items, identity_tokens) -> str:
+    for item in evidence_items:
+        text = _identity_source_raw_text(item)
+        for display_name in _identity_display_name_candidates(text):
+            if _source_identity_match_count(display_name, identity_tokens) >= len(identity_tokens):
+                return display_name
+    return " ".join(token.capitalize() for token in identity_tokens) or _compact_source_text(
+        question.strip(" ?!."),
+        limit=80,
+    )
+
+
+def _identity_display_name_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    name_part = r"[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]{2,}"
+    for match in re.finditer(rf"\b({name_part})\s+({name_part})\b", text or ""):
+        first, last = match.groups()
+        if {first.lower(), last.lower()} & IDENTITY_STOPWORDS:
+            continue
+        candidates.append(f"{first} {last}")
+    for match in re.finditer(rf"\b({name_part}),\s+({name_part})\b", text or ""):
+        last, first = match.groups()
+        if {first.lower(), last.lower()} & IDENTITY_STOPWORDS:
+            continue
+        candidates.append(f"{first} {last}")
+    return _unique_nonempty(candidates)
+
+
+def _identity_fact_text_from_item(item, terms, identity_tokens, subject: str) -> str:
+    text = _identity_evidence_text(item)
+    sentence = _best_evidence_sentence(text, terms)
+    if sentence and not _identity_sentence_looks_like_source_heading(sentence, item):
+        return _compact_source_text(sentence, limit=320)
+    affiliation = _extract_identity_affiliation(text)
+    if affiliation:
+        return f"{subject} is listed with an affiliation at {affiliation}."
+    role = _extract_identity_role_phrase(text)
+    if role:
+        return f"{subject} is described as {role}."
+    title = _identity_clean_title(getattr(item, "title", "") or "")
+    if title:
+        return f"{subject} is mentioned in {title}."
+    return f"I found evidence about {subject}."
+
+
+def _identity_supporting_source_text(item, terms, identity_tokens, subject: str) -> str:
+    text = _identity_evidence_text(item)
+    sentence = _best_evidence_sentence(text, terms)
+    if sentence and not _identity_sentence_looks_like_source_heading(sentence, item):
+        return _compact_source_text(sentence, limit=220)
+    affiliation = _extract_identity_affiliation(text)
+    if affiliation:
+        return f"{subject} is also linked to {affiliation}"
+    title = _identity_clean_title(getattr(item, "title", "") or "")
+    return _compact_source_text(title or text, limit=220)
+
+
+def _identity_evidence_text(item) -> str:
+    title = getattr(item, "title", "") or ""
+    content = getattr(item, "content", "") or ""
+    body = f"{title}. {content}" if title and content else title or content
+    return " ".join(_unique_nonempty([body, getattr(item, "url", "")]))
+
+
+def _identity_sentence_looks_like_source_heading(sentence: str, item) -> bool:
+    lower = (sentence or "").lower()
+    title = (getattr(item, "title", "") or "").lower()
+    if title and lower.startswith(title[: min(40, len(title))]):
+        return True
+    return any(
+        marker in lower
+        for marker in (
+            "author details",
+            "google scholar",
+            "researchgate",
+            "linkedin profile",
+            "open conference systems",
+        )
+    )
+
+
+def _extract_identity_affiliation(text: str) -> str:
+    patterns = (
+        r"\b(University of [A-ZÀ-ÖØ-Þ][^,.;\n]{2,80})",
+        r"\b([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’& .-]{2,80} University)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text or "")
+        if not match:
+            continue
+        affiliation = re.sub(r"\s+", " ", match.group(1)).strip(" -")
+        affiliation = re.split(
+            r"\s+(?:with|where|who|and|profile|doctoral|researcher|email)\b",
+            affiliation,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip(" ,.;:-")
+        if affiliation:
+            return affiliation
+    return ""
+
+
+def _extract_identity_role_phrase(text: str) -> str:
+    match = re.search(
+        r"\b(?:is|was)\s+(?:an?\s+)?([^.;\n]{0,120}?"
+        r"(?:researcher|professor|student|author|scientist|engineer|statistician|lecturer))\b",
+        text or "",
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    return re.sub(r"\s+", " ", match.group(1)).strip(" ,.;:-")
+
+
+def _identity_clean_title(title: str) -> str:
+    cleaned = re.sub(r"\s+", " ", title or "").strip()
+    cleaned = re.sub(
+        r"^(?:author details|profile|profiles)\s*[-:|]*\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return _compact_source_text(cleaned, limit=160)
 
 
 def _useful_source_text(source):
