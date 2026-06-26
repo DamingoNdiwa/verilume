@@ -6,6 +6,15 @@
 
 Verilume lets users upload documents, build a local knowledge base, ask questions, compare evidence, view citations, and export answers.
 
+## App Preview
+
+Verilume launches straight into the research workspace, with model status, local library metrics, source controls, chat actions, and export options visible from the first screen.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/verilume-launch-dark.png">
+  <img src="docs/assets/verilume-launch-light.png" alt="Verilume launch screen showing the sidebar, status pills, research actions, and chat input.">
+</picture>
+
 ## Privacy
 
 User documents, indexes, Chroma data, manifests, tables, cache, and settings stay on the user's computer under `~/.verilume` by default.
