@@ -2,49 +2,36 @@
 
 [![CI](https://github.com/DamingoNdiwa/verilume/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DamingoNdiwa/verilume/actions/workflows/ci.yml)
 
-> Local-first AI research assistant with transparent evidence, hybrid retrieval, and source-grounded answers.
+> Local-first AI research assistant for documents, evidence, and source-grounded answers.
 
-Verilume helps users search documents, ask questions, compare evidence, and export cited answers. It combines local document retrieval, AI model knowledge, and optional web search while keeping local files and indexes on the user's machine by default.
+Verilume lets users upload documents, build a local knowledge base, ask questions, compare evidence, view citations, and export answers.
 
-## Privacy First
+## Privacy
 
-User documents, local indexes, Chroma databases, manifests, tables, semantic cache, and settings stay on the user's computer under `~/.verilume` by default. Verilume does not upload the document library or local vector database.
+User documents, indexes, Chroma data, manifests, tables, cache, and settings stay on the user's computer under `~/.verilume` by default.
 
-For a fully local workflow, use Ollama as the generation backend and turn web search off. In that mode, document data stays on the user's computer and is not sent to external model or search providers. Hosted model providers and web search are optional; if enabled, requests are sent only to the services the user configures.
+Verilume does not upload the document library or local vector database. For a fully local workflow, use Ollama and turn web search off. Hosted model providers and web search are optional and only used when configured.
 
 ## Why Verilume?
 
-Most local RAG systems retrieve text.
+Most local RAG apps retrieve text. Verilume retrieves, ranks, verifies, and explains evidence.
 
-Verilume retrieves, validates, ranks, and explains evidence.
+It shows:
 
-Instead of hiding retrieval, Verilume exposes:
+- local citations `[S1]`, `[S2]`
+- web citations `[W1]`, `[W2]`
+- confidence and evidence ranking
+- local, AI, and optional web source separation
 
-- Evidence ranking
-- Confidence
-- Local citations
-- Web citations
-- Hybrid reasoning
-- Transparent source selection
+## What It Supports
 
-Every answer should be explainable.
+- PDF, scanned PDF, DOCX, PPTX, TXT, Markdown, CSV, and OCR text
+- Chroma local vector database
+- Hugging Face and Ollama generation backends
+- Optional web search
+- Markdown and PDF export
 
-## What It Does
-
-- Upload and index local documents.
-- Search PDFs, scanned PDFs, DOCX, PPTX, TXT, Markdown, CSV, and OCR text.
-- Ask questions across local documents, AI knowledge, and optional web sources.
-- Show local citations as `[S1]`, `[S2]`, `[S3]`.
-- Show web citations as `[W1]`, `[W2]`, `[W3]`.
-- Keep local and web sources separate.
-- Export chats to Markdown or PDF.
-- Run with Hugging Face or Ollama generation backends.
-
-## Architecture
-
-Verilume is a local-first Streamlit application with a Python package backend.
-
-### Main Flow
+## How It Works
 
 ```mermaid
 flowchart TD
@@ -59,25 +46,7 @@ flowchart TD
     V --> A[Final Answer]
 ```
 
-### Main Components
-
-- `src/verilume/app.py` starts the Streamlit app.
-- `src/verilume/ingest.py` extracts, chunks, embeds, and indexes local documents.
-- `src/verilume/rag.py` orchestrates local retrieval, model answers, web evidence, ranking, verification, and final synthesis.
-- `src/verilume/core/retrieval.py` provides dense, BM25-style, and hybrid Chroma retrieval.
-- `src/verilume/core/generation.py` supports Hugging Face and Ollama generation backends.
-- `src/verilume/core/web_search.py` supports configurable web search providers.
-- `src/verilume/ui/` contains the Streamlit interface.
-
-### Local Data
-
-By default, user data is stored under `~/.verilume`, including uploaded documents, Chroma, ingestion manifests, tables, semantic cache, and local configuration.
-
-## Installation
-
-Verilume can run from source today. A PyPI package and desktop installers are planned release assets.
-
-### From GitHub
+## Install
 
 ```bash
 git clone git@github.com:DamingoNdiwa/verilume.git
@@ -88,53 +57,32 @@ python -m pip install -e ".[dev]"
 verilume run
 ```
 
-### With Streamlit
+Or run directly with Streamlit:
 
 ```bash
 python -m streamlit run src/verilume/app.py
 ```
 
-### From PyPI
-
-PyPI installation will be available after the public package release:
-
-```bash
-python -m pip install verilume
-verilume run
-```
-
-### macOS Launcher
-
-On macOS, repository builds can also be launched by double-clicking:
+On macOS, double-click:
 
 ```text
 Verilume.command
 ```
 
-The first launch may download local embedding models. Uploaded documents, Chroma data, and local settings are stored under:
-
-```text
-~/.verilume
-```
-
 ## Basic Use
 
 1. Launch the app.
-2. Choose a generation backend.
-3. Add a Hugging Face token or use Ollama if configured locally.
-4. Optionally add a web search provider key.
-5. Upload documents.
-6. Build the knowledge base.
-7. Ask a question.
-8. Review evidence and citations.
-9. Export the conversation if needed.
+2. Choose Hugging Face or Ollama.
+3. Upload documents.
+4. Build the knowledge base.
+5. Ask questions.
+6. Review citations and export the chat.
 
 ## CLI
 
 ```bash
 verilume run
 verilume ingest
-verilume ingest --reset
 verilume stats
 verilume config
 verilume doctor

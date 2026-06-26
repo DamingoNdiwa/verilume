@@ -24,7 +24,7 @@ export VERILUME_PORT="${VERILUME_PORT:-8501}"
 APP_URL="http://localhost:${VERILUME_PORT}"
 echo "Starting Verilume from $APP_DIR"
 echo "Target URL: $APP_URL"
-echo "Use this launcher for local development; README.md emphasizes local data and architecture."
+echo "Use this launcher for local development; README.md is direct and concise."
 
 function verilume_is_running() {
   if command -v lsof >/dev/null 2>&1; then
