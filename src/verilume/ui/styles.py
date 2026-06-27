@@ -72,6 +72,9 @@ def _theme_tokens(appearance: str) -> dict[str, str]:
                 "0 0 0 3px rgba(199, 138, 26, .18), "
                 "0 8px 26px rgba(31, 41, 55, .16)"
             ),
+            "veri-tooltip-bg": "#ffffff",
+            "veri-tooltip-text": "#1c2430",
+            "veri-tooltip-border": "#cfd6df",
         }
         gradient = "linear-gradient(180deg, rgba(199, 138, 26, 0.08) 0%, rgba(248, 249, 251, 0) 280px)"
     else:
@@ -115,6 +118,9 @@ def _theme_tokens(appearance: str) -> dict[str, str]:
                 "0 0 0 3px rgba(255, 200, 87, .16), "
                 "0 8px 30px rgba(0, 0, 0, .28)"
             ),
+            "veri-tooltip-bg": "#f8f9fb",
+            "veri-tooltip-text": "#101319",
+            "veri-tooltip-border": "#ffc857",
         }
         gradient = "linear-gradient(180deg, rgba(255, 200, 87, 0.08) 0%, rgba(11, 13, 16, 0) 280px)"
     variables = "\n".join(f"  --{name}: {value};" for name, value in tokens.items())
@@ -167,6 +173,74 @@ html {
 
 [data-testid="stSidebar"] * {
   color: var(--veri-text);
+}
+
+[role="tooltip"],
+[data-baseweb="tooltip"] {
+  background: var(--veri-tooltip-bg) !important;
+  background-color: var(--veri-tooltip-bg) !important;
+  border: 1px solid var(--veri-tooltip-border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, .28) !important;
+  color: var(--veri-tooltip-text) !important;
+  height: auto !important;
+  line-height: 1.35 !important;
+  max-width: min(28rem, calc(100vw - 2rem)) !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  -webkit-text-fill-color: var(--veri-tooltip-text) !important;
+}
+
+[data-testid="stTooltip"],
+[data-testid="stTooltipContent"],
+[data-testid="stMarkdownTooltip"] {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  color: var(--veri-tooltip-text) !important;
+  height: auto !important;
+  line-height: 1.35 !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  padding: .48rem .68rem !important;
+  -webkit-text-fill-color: var(--veri-tooltip-text) !important;
+}
+
+[role="tooltip"] *,
+[data-baseweb="tooltip"] *,
+[data-testid="stTooltip"] *,
+[data-testid="stTooltipContent"] *,
+[data-testid="stMarkdownTooltip"] * {
+  color: var(--veri-tooltip-text) !important;
+  -webkit-text-fill-color: var(--veri-tooltip-text) !important;
+}
+
+[role="tooltip"] p,
+[data-baseweb="tooltip"] p,
+[data-testid="stTooltip"] p,
+[data-testid="stTooltipContent"] p,
+[data-testid="stMarkdownTooltip"] p {
+  color: var(--veri-tooltip-text) !important;
+  line-height: 1.35 !important;
+  margin: 0 !important;
+  -webkit-text-fill-color: var(--veri-tooltip-text) !important;
+}
+
+[role="tooltip"] [data-testid="stMarkdownContainer"],
+[data-baseweb="tooltip"] [data-testid="stMarkdownContainer"],
+[data-testid="stTooltip"] [data-testid="stMarkdownContainer"],
+[data-testid="stTooltipContent"] [data-testid="stMarkdownContainer"],
+[data-testid="stMarkdownTooltip"] [data-testid="stMarkdownContainer"] {
+  color: var(--veri-tooltip-text) !important;
+  height: auto !important;
+  line-height: 1.35 !important;
+  margin: 0 !important;
+  -webkit-text-fill-color: var(--veri-tooltip-text) !important;
+}
+
+[data-baseweb="tooltip"] [data-popper-arrow],
+[role="tooltip"] [data-popper-arrow] {
+  color: var(--veri-tooltip-bg) !important;
 }
 
 .block-container {

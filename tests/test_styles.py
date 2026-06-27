@@ -29,6 +29,24 @@ class StyleThemeTests(unittest.TestCase):
                 self.assertIn("--veri-command-bottom: 28px;", tokens["variables"])
                 self.assertIn("--veri-command-height: 46px;", tokens["variables"])
 
+    def test_tooltip_tokens_and_selectors_force_readable_help_text(self) -> None:
+        for appearance in ("dark", "light"):
+            with self.subTest(appearance=appearance):
+                tokens = _theme_tokens(appearance)
+
+                self.assertIn("--veri-tooltip-bg:", tokens["variables"])
+                self.assertIn("--veri-tooltip-text:", tokens["variables"])
+                self.assertIn("--veri-tooltip-border:", tokens["variables"])
+
+        self.assertIn('[role="tooltip"]', _BASE_CSS)
+        self.assertIn('[data-baseweb="tooltip"]', _BASE_CSS)
+        self.assertIn('[data-testid="stTooltipContent"]', _BASE_CSS)
+        self.assertIn('[data-testid="stTooltipContent"] [data-testid="stMarkdownContainer"]', _BASE_CSS)
+        self.assertIn("color: var(--veri-tooltip-text) !important;", _BASE_CSS)
+        self.assertIn("padding: .48rem .68rem !important;", _BASE_CSS)
+        self.assertIn("margin: 0 !important;", _BASE_CSS)
+        self.assertIn("-webkit-text-fill-color: var(--veri-tooltip-text) !important;", _BASE_CSS)
+
     def test_secondary_buttons_force_readable_nested_text(self) -> None:
         self.assertIn('button[kind="secondary"][data-testid="baseButton-secondary"]', _BASE_CSS)
         self.assertIn("-webkit-text-fill-color: var(--veri-text) !important;", _BASE_CSS)
