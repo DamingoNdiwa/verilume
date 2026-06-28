@@ -7,11 +7,11 @@ type: software
 authors:
   - family-names: Mingo Ndiwago
     given-names: Damian
-repository-code: https://github.com/verilume/verilume
-url: https://github.com/verilume/verilume
-license: Apache-2.0
+repository-code: https://github.com/DamingoNdiwa/verilume
+url: https://github.com/DamingoNdiwa/verilume
+license: MIT
 version: 1.0.0
-date-released: 2026-07-01
+date-released: 2026-06-28
 abstract: >
   Verilume is an open-source, local-first AI assistant for
   retrieval-augmented generation (RAG), hybrid web search,
@@ -37,6 +37,5 @@ preferred-citation:
       given-names: Damian
   title: Verilume
   year: 2026
-  repository-code: https://github.com/verilume/verilume
-  url: https://github.com/verilume/verilume
-
+  repository-code: https://github.com/DamingoNdiwa/verilume
+  url: https://github.com/DamingoNdiwa/verilume

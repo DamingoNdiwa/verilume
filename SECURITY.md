@@ -8,4 +8,14 @@ Do not commit Hugging Face tokens, web search provider API keys, `.env`, `.strea
 
 ## Reporting
 
-For a public repository, open a private security advisory if GitHub security advisories are enabled. Otherwise, contact the maintainer listed on the repository before publishing exploit details.
+Report security issues privately.
+
+Do not create public GitHub issues for vulnerabilities, leaked secrets, or exploit details.
+
+Contact:
+
+```text
+security@ecosveri.dev
+```
+
+Until the EcosVeri website and private intake process are live, use GitHub private security advisories if available. If private advisories are unavailable, contact the maintainer through GitHub before publishing details.

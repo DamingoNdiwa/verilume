@@ -1,0 +1,32 @@
+name: Question
+description: Ask for help using, installing, or understanding Verilume.
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      placeholder: What would you like help with?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Include setup details, documents involved, or the workflow you are trying to complete.
+      placeholder: I am trying to...
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Installation
+        - Desktop app
+        - Hugging Face
+        - Tavily
+        - Local documents
+        - Citations
+        - Export
+        - Development
+        - Other

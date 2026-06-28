@@ -1,0 +1,24 @@
+name: Documentation
+description: Report missing, confusing, or outdated documentation.
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: textarea
+    id: page
+    attributes:
+      label: Page or Section
+      placeholder: README, installation docs, architecture docs, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What Should Change?
+      placeholder: Describe the missing or unclear documentation.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Text or Structure
+      placeholder: Optional draft wording, outline, or links.

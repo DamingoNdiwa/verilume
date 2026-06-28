@@ -1,29 +1,49 @@
 # Contributing
 
-Thanks for helping improve Verilume. The project is intentionally small and local-first, so changes should keep the desktop app easy for non-programmers to launch and understand.
+Thanks for helping improve Verilume. The project is local-first and desktop-oriented, so changes should keep the app easy for non-programmers to launch, understand, and trust.
 
-## Development Setup
+## Installation
 
 ```bash
+git clone git@github.com:DamingoNdiwa/verilume.git
+cd verilume
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[dev]"
+verilume run
 ```
 
-## Local Checks
+## Coding Style
 
-Run these before opening a pull request:
+- Prefer small, focused changes that preserve the existing package structure.
+- Keep local-first behavior intact: documents, Chroma data, manifests, cache, and settings should stay under user-controlled local paths.
+- Preserve citation behavior: local citations use `[S1]`, `[S2]`; web citations use `[W1]`, `[W2]`.
+- Keep UI copy clear and useful for non-programmers.
+
+## Formatting
+
+Run Ruff before submitting:
 
 ```bash
 python -m ruff check src tests launcher.py scripts
+```
+
+## Tests
+
+Run the local validation suite:
+
+```bash
 python -m compileall -q src tests launcher.py scripts/build_macos_app.py
 python -m unittest discover -s tests -v
 verilume doctor
 ```
 
-## Pull Requests
+Add focused tests when changing routing, ingestion, settings, exports, citation formatting, retrieval, or UI helper behavior.
 
-- Keep user-facing Streamlit behavior clear and documented.
-- Do not commit `.env`, tokens, local Chroma databases, uploaded documents, build outputs, or logs.
-- Add focused tests for routing, ingestion, settings, exports, or UI helper behavior when changing those areas.
-- Preserve citation behavior: local citations use `[S1]`, `[S2]`; web citations use `[W1]`, `[W2]`.
+## Submitting PRs
+
+- Describe what changed and why.
+- Include screenshots or GIFs for visible UI changes.
+- Link related issues when possible.
+- Do not commit `.env`, tokens, local Chroma databases, uploaded documents, build outputs, logs, or private user files.
+- Keep PRs scoped enough to review without losing the thread.

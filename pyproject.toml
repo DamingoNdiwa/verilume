@@ -4,39 +4,44 @@ build-backend = "hatchling.build"
 
 [project]
 name = "verilume"
-version = "0.1.0"
-description = "Local-first AI research assistant with hybrid retrieval, transparent evidence, and source-grounded answers."
+version = "1.0.0"
+description = "Privacy-first desktop AI assistant for documents, research, evidence verification, and hybrid local + web search."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = { text = "MIT" }
 authors = [
   { name = "Damian Mingo Ndiwago" }
 ]
 keywords = [
+  "privacy",
+  "desktop-ai",
   "rag",
-  "retrieval-augmented-generation",
-  "local-ai",
-  "research-assistant",
-  "evidence-based-ai",
-  "hybrid-search",
-  "semantic-search",
   "document-ai",
-  "ocr",
-  "multimodal",
-  "streamlit",
-  "chromadb",
+  "research",
+  "semantic-search",
+  "hybrid-search",
+  "citations",
+  "offline",
+  "ollama",
   "huggingface",
   "llm",
+  "python",
+  "desktop",
+  "retrieval",
+  "research-assistant",
   "offline-ai",
-  "citation",
-  "document-retrieval",
+  "open-source",
+  "vector-search",
+  "chromadb",
+  "streamlit",
+  "evidence",
   "knowledge-management",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: End Users/Desktop",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: Apache Software License",
+  "License :: OSI Approved :: MIT License",
   "Operating System :: MacOS",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
@@ -65,10 +70,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/verilume/verilume"
-Repository = "https://github.com/verilume/verilume"
-Documentation = "https://docs.verilume.ai"
-Issues = "https://github.com/verilume/verilume/issues"
+Homepage = "https://ecosveri.dev"
+Repository = "https://github.com/DamingoNdiwa/verilume"
+Documentation = "https://github.com/DamingoNdiwa/verilume#documentation"
+Issues = "https://github.com/DamingoNdiwa/verilume/issues"
 
 [project.optional-dependencies]
 mac = ["pyinstaller>=6.10.0"]
