@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="#downloads"><strong>Download macOS</strong></a>
-  · <a href="#install">PyPI (Coming Soon)</a>
+  · <a href="#install-from-github">Install from GitHub</a>
   · <a href="#downloads">Windows (Coming Soon)</a>
   · <a href="#documentation">Documentation (Coming Soon)</a>
   · <a href="#about-ecosveri">Website (Coming Soon)</a>
@@ -24,10 +24,12 @@ Verilume combines local semantic search, AI reasoning, evidence verification, op
 
 | Platform | Status |
 | --- | --- |
-| macOS | EcosVeri release planned for July 3, 2026 |
+| macOS | Test builds are published on GitHub Releases |
 | Windows | Coming Soon |
 | Linux | Coming Soon |
-| PyPI | Coming Soon |
+| Python package | Install from GitHub while PyPI is pending |
+
+The public EcosVeri release is planned after the repository transfer. Until then, use this GitHub repository for test builds.
 
 ## Demo
 
@@ -146,7 +148,9 @@ Web citations use `[W1]`, `[W2]`, `[W3]` and are shown separately as clickable s
 
 ### Desktop
 
-The macOS desktop release is planned for July 3, 2026 under EcosVeri.
+Download the latest `Verilume-macOS-*.zip` from GitHub Releases, unzip it, and open `Verilume.app`.
+
+macOS may show a first-run security warning because test builds are not notarized yet. If that happens, Control-click `Verilume.app`, choose Open, then confirm.
 
 On macOS, you can also double-click the source launcher:
 
@@ -154,10 +158,26 @@ On macOS, you can also double-click the source launcher:
 Verilume.command
 ```
 
+### Install from GitHub
+
+Install the latest committed version from this repository:
+
+```bash
+python -m pip install "verilume @ git+https://github.com/DamingoNdiwa/verilume.git@main"
+verilume run
+```
+
+Install a tagged test release:
+
+```bash
+python -m pip install "verilume @ git+https://github.com/DamingoNdiwa/verilume.git@v0.1.0-test.1"
+verilume run
+```
+
 ### CLI
 
 ```bash
-python -m pip install verilume
+python -m pip install "verilume @ git+https://github.com/DamingoNdiwa/verilume.git@main"
 verilume run
 ```
 

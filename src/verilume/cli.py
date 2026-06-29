@@ -66,16 +66,17 @@ def run_streamlit() -> int:
     app_path = files("verilume").joinpath("app.py")
     streamlit_args = _streamlit_cli_args(app_path, port=_resolve_streamlit_port())
     if getattr(sys, "frozen", False):
-        _patch_streamlit_for_frozen_bundle()
-
-        from streamlit.web.cli import main as streamlit_main
-
+        os.environ.setdefault("STREAMLIT_GLOBAL_DEVELOPMENT_MODE", "false")
         sys.argv = [
             "streamlit",
             *streamlit_args,
             "--global.developmentMode",
             "false",
         ]
+        _patch_streamlit_for_frozen_bundle()
+
+        from streamlit.web.cli import main as streamlit_main
+
         try:
             return int(streamlit_main() or 0)
         except SystemExit as exc:
@@ -240,7 +241,23 @@ def _patch_streamlit_for_frozen_bundle() -> None:
     if static_dir is not None:
         file_util.get_static_dir = lambda: str(static_dir)
 
-    config.set_option("global.developmentMode", False)
+    _disable_streamlit_development_mode(config, development)
+
+
+def _disable_streamlit_development_mode(config, development) -> None:
+    dev_mode_option = getattr(config, "_global_development_mode", None)
+    set_value = getattr(dev_mode_option, "set_value", None)
+    if callable(set_value):
+        set_value(False, "<streamlit>")
+
+    config_options = getattr(config, "_config_options", None)
+    set_option = getattr(config, "_set_option", None)
+    if config_options is not None and callable(set_option):
+        try:
+            set_option("global.developmentMode", False, "<streamlit>")
+        except Exception:
+            pass
+
     development.is_development_mode = False
 
 
