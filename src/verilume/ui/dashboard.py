@@ -2,28 +2,37 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from html import escape
 from typing import Any, Sequence
 
 import streamlit as st
 
+from verilume.core.document_index import build_document_index
 from verilume.core.prompt_suggestions import (
     PromptSuggestion,
     generate_suggested_prompts,
 )
+from verilume.ingest import document_metadata_from_manifest
 from verilume.settings import AppSettings
+
+LOGGER = logging.getLogger(__name__)
 
 DEFAULT_DASHBOARD_COLLAPSED = True
 
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _generate_prompts_cached(
-    recent_documents: tuple[str, ...],
     recent_activity: tuple[str, ...],
     settings: AppSettings,
 ) -> list[PromptSuggestion]:
-    return generate_suggested_prompts(list(recent_documents), list(recent_activity), settings)
+    try:
+        document_index = build_document_index(document_metadata_from_manifest(settings))
+    except Exception:
+        LOGGER.debug("Failed to build document index for prompt suggestions.", exc_info=True)
+        document_index = []
+    return generate_suggested_prompts(document_index, list(recent_activity), settings)
 
 
 def render_dashboard(
@@ -71,7 +80,7 @@ def render_dashboard(
         # Generate prompts here, after the early-return, so they are skipped
         # entirely when the dashboard is collapsed (saves compute on every rerun).
         effective_prompts = suggested_prompts if suggested_prompts is not None else _generate_prompts_cached(
-            tuple(recent_documents), tuple(recent_activity), settings
+            tuple(recent_activity), settings
         )
         render_suggested_prompts(effective_prompts)
 
