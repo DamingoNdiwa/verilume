@@ -6,6 +6,8 @@ import json
 import logging
 import random
 import re
+import threading
+import time
 from datetime import datetime, timedelta
 from html import escape
 from typing import Any
@@ -70,6 +72,9 @@ SEARCH_MODE_DISPLAY_LABELS = {
     "auto": "Auto",
 }
 
+# Session-state key that holds the active background generation dict.
+_GEN_STATE_KEY = "_verilume_generation"
+
 
 def init_chat_state() -> None:
     if "messages" not in st.session_state:
@@ -100,8 +105,14 @@ def render_chat(
     _render_toolbar(settings)
     _render_message_history(settings)
 
+    # If a background generation is already running, poll it and return early.
+    if st.session_state.get(_GEN_STATE_KEY) is not None:
+        _poll_generation(settings)
+        return
+
     if regenerate_prompt:
-        _generate_assistant_response(settings, regenerate_prompt)
+        _start_generation(settings, regenerate_prompt)
+        _poll_generation(settings)
         return
 
     if not st.session_state.messages:
@@ -112,17 +123,14 @@ def render_chat(
     if not prompt:
         return
 
-    _handle_prompt(settings, prompt)
-
-
-def _handle_prompt(settings: AppSettings, prompt: str) -> None:
     st.session_state.messages.append(
         {"role": "user", "content": prompt, "timestamp": _now_timestamp()}
     )
     with st.chat_message("user", avatar=USER_ICON):
         st.markdown(prompt)
 
-    _generate_assistant_response(settings, prompt)
+    _start_generation(settings, prompt)
+    _poll_generation(settings)
 
 
 def _chat_placeholder(settings: AppSettings) -> str:
@@ -144,27 +152,103 @@ def _consume_pending_prompt() -> str | None:
     return prompt_text or None
 
 
-def _generate_assistant_response(settings: AppSettings, prompt: str) -> None:
+def _start_generation(settings: AppSettings, prompt: str) -> None:
+    """Kick off RAG in a background thread and store the handle in session state."""
     history = _history_from_messages(st.session_state.messages[:-1])
-    with st.chat_message("assistant", avatar=ASSISTANT_ICON):
-        placeholder = st.empty()
-        stage_placeholder = st.empty()
-        st.session_state.generating = True
-        st.session_state.stop_requested = False
-        try:
-            def update_stage(label: str) -> None:
-                stage_placeholder.markdown(_loading_stage_html(label), unsafe_allow_html=True)
+    conv_state = st.session_state.conversation_state
+    stop_event = threading.Event()
+    result_box: dict[str, Any] = {"done": False, "stage": "Searching local evidence..."}
 
-            update_stage("Searching local evidence...")
-            response = get_rag_service(settings).ask(
+    def worker() -> None:
+        try:
+            resp = get_rag_service(settings).ask(
                 prompt,
                 history,
-                conversation_state=st.session_state.conversation_state,
-                should_stop=lambda: st.session_state.stop_requested,
-                on_stage=update_stage,
+                conversation_state=conv_state,
+                should_stop=stop_event.is_set,
+                on_stage=lambda label: result_box.update({"stage": label}),
             )
-            placeholder.empty()
-            stage_placeholder.empty()
+            result_box["response"] = resp
+        except GenerationStopped:
+            result_box["stopped"] = True
+        except TimeoutError:
+            LOGGER.exception("Chat generation timed out.")
+            result_box["error"] = (
+                "The model took too long to respond. Try again or switch to a faster model."
+            )
+        except (ValueError, KeyError) as exc:
+            LOGGER.exception("Chat generation returned an invalid response.")
+            result_box["error"] = (
+                f"The model returned an unexpected response ({type(exc).__name__}). Try again."
+            )
+        except ConnectionError:
+            LOGGER.exception("Chat generation lost network connection.")
+            result_box["error"] = (
+                "Connection error while reaching the model. Check your network or Ollama status."
+            )
+        except Exception:
+            LOGGER.exception("Chat generation failed.")
+            result_box["error"] = (
+                "Something went wrong generating the answer. Check the terminal logs and try again."
+            )
+        finally:
+            result_box["done"] = True
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    st.session_state[_GEN_STATE_KEY] = {
+        "thread": thread,
+        "stop_event": stop_event,
+        "result": result_box,
+        "prompt": prompt,
+    }
+    st.session_state.generating = True
+    st.session_state.stop_requested = False
+
+
+def _poll_generation(settings: AppSettings) -> None:
+    """Show progress or render the finished result; schedule a rerun if still running."""
+    gen = st.session_state.get(_GEN_STATE_KEY)
+    if gen is None:
+        return
+
+    result_box: dict[str, Any] = gen["result"]
+    stop_event: threading.Event = gen["stop_event"]
+
+    # Forward a pending stop request to the worker thread immediately.
+    if st.session_state.stop_requested:
+        stop_event.set()
+
+    if not result_box["done"]:
+        with st.chat_message("assistant", avatar=ASSISTANT_ICON):
+            st.markdown(
+                _loading_stage_html(result_box.get("stage", "Searching local evidence...")),
+                unsafe_allow_html=True,
+            )
+        time.sleep(0.4)
+        st.rerun()
+        return
+
+    # Generation finished — clean up state flags.
+    st.session_state.generating = False
+    st.session_state.stop_requested = False
+    del st.session_state[_GEN_STATE_KEY]
+
+    with st.chat_message("assistant", avatar=ASSISTANT_ICON):
+        if result_box.get("stopped"):
+            message = "Generation stopped by user."
+            msg_dict = {"role": "assistant", "content": message, "timestamp": _now_timestamp()}
+            _render_assistant_meta(msg_dict, len(st.session_state.messages))
+            st.markdown(message)
+            st.session_state.messages.append(msg_dict)
+        elif result_box.get("error"):
+            message = str(result_box["error"])
+            msg_dict = {"role": "assistant", "content": message, "timestamp": _now_timestamp()}
+            _render_assistant_meta(msg_dict, len(st.session_state.messages))
+            st.warning(message)
+            st.session_state.messages.append(msg_dict)
+        else:
+            response = result_box["response"]
             assistant_message = {
                 "role": "assistant",
                 "content": response.answer,
@@ -178,36 +262,6 @@ def _generate_assistant_response(settings: AppSettings, prompt: str) -> None:
             _render_sources(response, settings)
             st.session_state.messages.append(assistant_message)
             _trim_history(settings.max_chat_messages)
-        except GenerationStopped:
-            message = "Generation stopped by user."
-            assistant_message = {
-                "role": "assistant",
-                "content": message,
-                "timestamp": _now_timestamp(),
-            }
-            placeholder.empty()
-            stage_placeholder.empty()
-            _render_assistant_meta(assistant_message, len(st.session_state.messages))
-            st.markdown(message)
-            st.session_state.messages.append(assistant_message)
-        except TimeoutError:
-            LOGGER.exception("Chat generation timed out.")
-            message = "The model took too long to respond. Try again or switch to a faster model."
-            _append_error_message(placeholder, stage_placeholder, message)
-        except (ValueError, KeyError) as exc:
-            LOGGER.exception("Chat generation returned an invalid response.")
-            message = f"The model returned an unexpected response ({type(exc).__name__}). Try again."
-            _append_error_message(placeholder, stage_placeholder, message)
-        except ConnectionError:
-            LOGGER.exception("Chat generation lost network connection.")
-            message = "Connection error while reaching the model. Check your network or Ollama status."
-            _append_error_message(placeholder, stage_placeholder, message)
-        except Exception:
-            LOGGER.exception("Chat generation failed.")
-            message = "Something went wrong generating the answer. Check the terminal logs and try again."
-            _append_error_message(placeholder, stage_placeholder, message)
-        finally:
-            st.session_state.generating = False
 
 
 @st.cache_data(show_spinner=False)
@@ -218,15 +272,6 @@ def _cached_chat_pdf(messages: tuple[Any, ...], title: str) -> bytes | None:
     except Exception:
         LOGGER.debug("PDF export unavailable.", exc_info=True)
         return None
-
-
-def _append_error_message(placeholder: Any, stage_placeholder: Any, message: str) -> None:
-    placeholder.empty()
-    stage_placeholder.empty()
-    msg_dict = {"role": "assistant", "content": message, "timestamp": _now_timestamp()}
-    _render_assistant_meta(msg_dict, len(st.session_state.messages))
-    st.warning(message)
-    st.session_state.messages.append(msg_dict)
 
 
 def _render_toolbar(settings: AppSettings) -> None:
@@ -240,8 +285,6 @@ def _render_toolbar(settings: AppSettings) -> None:
             help="Stop the current response",
         ):
             st.session_state.stop_requested = True
-            if st.session_state.generating:
-                st.warning("Stop requested. The current response will finish this turn.")
     with col_b:
         if st.button(
             "\u21ba Regenerate",
