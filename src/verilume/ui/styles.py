@@ -1942,5 +1942,71 @@ a {
     padding: 0 !important;
   }
 }
+
+.veri-onboard {
+  background: var(--veri-panel-2);
+  border: 1px solid var(--veri-line);
+  border-radius: 12px;
+  margin: 0 0 .9rem 0;
+  padding: .85rem 1rem;
+}
+
+.veri-onboard-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: .6rem;
+}
+
+.veri-onboard-kicker {
+  color: var(--veri-amber);
+  font-size: .74rem;
+  font-weight: 820;
+  letter-spacing: .08rem;
+  text-transform: uppercase;
+}
+
+.veri-onboard-progress {
+  color: var(--veri-text-dim, #9aa3b2);
+  font-size: .76rem;
+  font-weight: 700;
+}
+
+.veri-onboard-steps {
+  display: grid;
+  gap: .4rem;
+}
+
+.veri-onboard-step {
+  align-items: baseline;
+  border: 1px solid var(--veri-line);
+  border-radius: 8px;
+  display: flex;
+  gap: .55rem;
+  padding: .5rem .65rem;
+}
+
+.veri-onboard-mark {
+  font-weight: 820;
+}
+
+.veri-onboard-mark.done {
+  color: var(--veri-teal, #36d1c4);
+}
+
+.veri-onboard-mark.todo {
+  color: var(--veri-text-dim, #9aa3b2);
+}
+
+.veri-onboard-step-title {
+  color: var(--veri-text);
+  font-weight: 720;
+}
+
+.veri-onboard-step-detail {
+  color: var(--veri-text-dim, #9aa3b2);
+  font-size: .8rem;
+  margin-left: auto;
+}
 </style>
 """

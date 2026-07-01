@@ -23,6 +23,7 @@ from verilume.ui.dashboard import (
     render_empty_document_state,
 )
 from verilume.ui.header import render_header
+from verilume.ui.onboarding import render_onboarding
 from verilume.ui.sidebar import SidebarState, render_sidebar
 from verilume.ui.styles import inject_styles
 from verilume.utils.document_stats import collect_document_stats
@@ -60,12 +61,15 @@ def main() -> None:
     recent_activity = recent_activity_from_messages(st.session_state.get("messages", []))
 
     header_slot = st.container()
+    onboarding_slot = st.container()
     dashboard_slot = st.container()
     document_state_slot = st.container()
     chat_slot = st.container()
 
     with header_slot:
         render_header(sidebar.settings, stats)
+    with onboarding_slot:
+        render_onboarding(sidebar.settings, stats)
     with dashboard_slot:
         # suggested_prompts=None tells render_dashboard to generate them lazily
         # after the collapsed-check so they are skipped entirely when collapsed.
