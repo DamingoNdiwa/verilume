@@ -1,6 +1,8 @@
 # Verilume
 
-> Privacy-first AI desktop assistant for documents, research and evidence.
+> **Evidence First. Answers Second.**
+>
+> A local-first, evidence-first AI research assistant. Verilume doesn't just answer questions — it evaluates evidence, verifies claims, calibrates confidence, and shows you exactly why each source won.
 
 <p align="center">
   <a href="#downloads"><strong>Download macOS</strong></a>
@@ -18,7 +20,7 @@
 ![PyPI Soon](https://img.shields.io/badge/PyPI-soon-blue)
 ![Active Development](https://img.shields.io/badge/status-active%20development-f59e0b)
 
-Verilume combines local semantic search, AI reasoning, evidence verification, optional web search, and exportable citations in a desktop-ready Python application.
+Most RAG applications answer questions. Verilume **evaluates evidence**: hybrid retrieval (BM25 + embeddings + reranking) over your local documents, optional web search grouped by source authority (government, research, university, news), claim-level verification, calibrated confidence that can never outrank the evidence, and a benchmark mode that compares Local vs AI vs Web vs Full retrieval on any question — all in a privacy-first desktop app.
 
 ## Downloads
 
@@ -37,15 +39,14 @@ Demo GIF coming soon. The first recording will show PDF upload, indexing, questi
 
 ## Why Verilume?
 
-Modern AI assistants often require uploading private documents to cloud services.
+Modern AI assistants ask you to trust them. Verilume shows its work:
 
-Verilume keeps your documents under your control while combining:
-
-- Local semantic search
-- AI reasoning
-- Evidence verification
-- Optional web search
-- Source citations
+- **Transparent evidence verification** — every answer carries an Evidence Summary: confidence, winning source, agreement, claim support, and *why* the winner won.
+- **Calibrated confidence** — the badge is evidence-capped: a freshness conflict caps it to Medium, zero supported claims force it to Low. Fluent prose can't fake certainty.
+- **Local-first retrieval with page-level citations** — hybrid BM25 + embeddings + reranking over your own files, cited as `[S1]` with document and page. Nothing is uploaded.
+- **Source-quality grouping** — web evidence is grouped and weighted by authority: government, research, university, news, then the open web.
+- **Built-in benchmark mode** — compare Local vs AI vs Web vs Full retrieval on any question, with per-mode answers, latency, and faithfulness.
+- **A desktop workspace** — manage, index, and query a personal knowledge base with document-aware suggested prompts.
 
 Everything is designed around privacy, transparency and reproducible answers.
 
@@ -54,13 +55,13 @@ Everything is designed around privacy, transparency and reproducible answers.
 <table>
   <tr>
     <td><strong>Privacy First</strong><br>Runs locally without uploading files.</td>
-    <td><strong>Evidence-Based</strong><br>Every answer can include source citations.</td>
-    <td><strong>Hybrid Search</strong><br>Local documents plus optional web search.</td>
+    <td><strong>Evidence Verification</strong><br>Claim-level support checks, agreement, conflicts, and calibrated confidence on every answer.</td>
+    <td><strong>Hybrid Search</strong><br>BM25 + embeddings + reranking over local documents, plus optional authority-grouped web search.</td>
   </tr>
   <tr>
-    <td><strong>Desktop Ready</strong><br>Streamlit app with a macOS launcher and planned release assets.</td>
-    <td><strong>Multiple Models</strong><br>Hugging Face today. Ollama-ready local workflows.</td>
-    <td><strong>Open Source</strong><br>Apache-2.0 licensed and built in public.</td>
+    <td><strong>Benchmark Mode</strong><br>Compare Local vs AI vs Web vs Full retrieval on any question.</td>
+    <td><strong>Transparent Citations</strong><br>Page-level local citations and clickable web sources, exportable to Markdown or PDF.</td>
+    <td><strong>Desktop Ready</strong><br>Streamlit app with a macOS launcher; Hugging Face today, Ollama-ready. Apache-2.0, built in public.</td>
   </tr>
 </table>
 
@@ -83,7 +84,7 @@ flowchart TD
     H --> L[Local Search]
     H --> M[AI Knowledge]
     H --> W[Optional Web Search]
-    L --> R[Cross Encoder Ranking]
+    L --> R[Hybrid Ranking + Rerank]
     M --> R
     W --> R
     R --> E[Evidence Verification]
@@ -99,6 +100,9 @@ flowchart TD
 | Local execution | Yes | No | No |
 | Optional web search | Yes | Yes | No |
 | Evidence verification | Yes | Partial | Partial |
+| Calibrated confidence scoring | Yes | No | No |
+| Benchmark across retrieval modes | Yes | No | No |
+| Source-authority grouping | Yes | No | No |
 | Citations | Yes | Partial | Yes |
 | Offline mode | Soon | No | No |
 
