@@ -71,7 +71,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://ecosveri.dev"
+Homepage = "https://github.com/DamingoNdiwa/verilume"
 Repository = "https://github.com/DamingoNdiwa/verilume"
 Documentation = "https://github.com/DamingoNdiwa/verilume#documentation"
 Issues = "https://github.com/DamingoNdiwa/verilume/issues"
