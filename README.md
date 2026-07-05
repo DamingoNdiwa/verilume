@@ -281,7 +281,7 @@ Documentation covering installation, architecture, retrieval, evidence, OCR, and
 
 If you use Verilume in your research or software, please cite:
 
-> Damian Mingo Ndiwago. (2026). *Verilume: Privacy-first AI research assistant for your local documents*. Zenodo. https://doi.org/10.5281/zenodo.21210006
+> Mingo Ndiwago, D. (2026). *Verilume: Privacy-first AI research assistant for your local documents*. Zenodo. https://doi.org/10.5281/zenodo.21210006
 
 This DOI represents all versions of Verilume and always resolves to the latest release.
 
