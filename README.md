@@ -294,5 +294,5 @@ Website: ecosveri.dev (Coming Soon).
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE).\\
 https://doi.org/10.5281/zenodo.21210007
