@@ -148,7 +148,7 @@ Web citations use `[W1]`, `[W2]`, `[W3]` and are shown separately as clickable s
 
 ## Roadmap
 
-### Version 1.0
+### Version 1.0 (shipped)
 
 - PDF support
 - Word support

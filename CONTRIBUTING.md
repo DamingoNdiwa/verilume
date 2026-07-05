@@ -2,6 +2,8 @@
 
 Thanks for helping improve Verilume. The project is local-first and desktop-oriented, so changes should keep the app easy for non-programmers to launch, understand, and trust.
 
+By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Installation
 
 ```bash
@@ -42,6 +44,7 @@ Add focused tests when changing routing, ingestion, settings, exports, citation 
 
 ## Submitting PRs
 
+- Fork the repository, create a feature branch, and open a pull request against `main`.
 - Describe what changed and why.
 - Include screenshots or GIFs for visible UI changes.
 - Link related issues when possible.

@@ -3,10 +3,12 @@
 ## Unreleased
 
 - Repositioned Verilume as a privacy-first desktop AI assistant for documents, research, evidence verification, and hybrid local plus web search.
-- Added the README hero, download links, badges, demo slot, feature cards, screenshots section, improved architecture diagram, comparison table, roadmap, benchmarks, and EcosVeri section.
+- Restructured the README for launch: value proposition, badges, launch banner, demo, quick start, feature grid, "Who Is Verilume For", documentation links, and an expanded comparison table.
+- Refreshed the README demo recording and launch screenshots.
 - Added GitHub issue templates and a pull request template for community contributions.
 - Expanded contributor, security, and roadmap documentation.
-- Kept the project on Apache-2.0 licensing while preparing public launch materials.
+- Added a NOTICE file and explicit Apache-2.0 contribution terms in the contributing guide.
+- Trimmed the roadmap and TODO to remaining work only.
 
 ## 0.1.0 - 2026-06-23
 
