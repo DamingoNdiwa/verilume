@@ -284,13 +284,13 @@ Documentation covering installation, architecture, retrieval, evidence, OCR, and
 
 ## Cite Verilume
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21210006.svg)](https://doi.org/10.5281/zenodo.21210006)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21210443.svg)](https://doi.org/10.5281/zenodo.21210443)
 
 If you use Verilume in your research or software, please cite:
 
-> Mingo Ndiwago, D. (2026). *Verilume: Privacy-first AI research assistant for your local documents*. Zenodo. https://doi.org/10.5281/zenodo.21210006
+> Mingo Ndiwago, D. (2026). *Verilume: Privacy-first AI research assistant for local documents with hybrid retrieval, evidence verification, citations, and optional web search* (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.21210443
 
-This DOI represents all versions of Verilume and always resolves to the latest release.
+To cite all versions of Verilume, use the concept DOI: [10.5281/zenodo.21210006](https://doi.org/10.5281/zenodo.21210006).
 
 ## About EcosVeri
 

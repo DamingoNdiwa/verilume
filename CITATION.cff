@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-title: "Verilume: Privacy-first AI research assistant for your local documents"
+title: "Verilume: Privacy-first AI research assistant for local documents with hybrid retrieval, evidence verification, citations, and optional web search"
 message: >
   If you use Verilume in your research or software,
   please cite this project using the metadata below.
@@ -8,14 +8,14 @@ authors:
   - family-names: Mingo Ndiwago
     given-names: Damian
     affiliation: EcosVeri
-doi: 10.5281/zenodo.21210006
+doi: 10.5281/zenodo.21210443
 identifiers:
   - type: doi
     value: 10.5281/zenodo.21210006
     description: Concept DOI for all versions.
   - type: doi
-    value: 10.5281/zenodo.21210007
-    description: DOI for this version.
+    value: 10.5281/zenodo.21210443
+    description: DOI for version 1.0.0.
 repository-code: https://github.com/EcosVeri/verilume
 url: https://github.com/EcosVeri/verilume
 license: Apache-2.0
@@ -45,8 +45,8 @@ preferred-citation:
     - family-names: Mingo Ndiwago
       given-names: Damian
       affiliation: EcosVeri
-  title: "Verilume: Privacy-first AI research assistant for your local documents"
+  title: "Verilume: Privacy-first AI research assistant for local documents with hybrid retrieval, evidence verification, citations, and optional web search"
   year: 2026
-  doi: 10.5281/zenodo.21210006
+  doi: 10.5281/zenodo.21210443
   repository-code: https://github.com/EcosVeri/verilume
   url: https://github.com/EcosVeri/verilume
