@@ -302,4 +302,3 @@ Website: ecosveri.dev (Coming Soon).
 
 Apache-2.0. See [LICENSE](LICENSE).
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21210007.svg)](https://doi.org/10.5281/zenodo.21210007)
