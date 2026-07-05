@@ -9,7 +9,7 @@ Search PDFs, Office documents, scanned files, and images with hybrid retrieval, 
 [![CI](https://github.com/DamingoNdiwa/verilume/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DamingoNdiwa/verilume/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB)
 ![Apache 2.0 License](https://img.shields.io/badge/license-Apache%202.0-green)
-![macOS](https://img.shields.io/badge/macOS-available-black)
+![macOS](https://img.shields.io/badge/macOS-this%20week-black)
 ![Windows Soon](https://img.shields.io/badge/Windows-soon-lightgrey)
 ![PyPI Soon](https://img.shields.io/badge/PyPI-this%20week-blue)
 [![Ruff](https://img.shields.io/badge/linting-ruff-261230)](https://github.com/astral-sh/ruff)
@@ -48,7 +48,7 @@ python -m pip install "verilume @ git+https://github.com/DamingoNdiwa/verilume.g
 verilume run
 ```
 
-**Desktop app**: download the latest `Verilume-macOS-*.zip` from [GitHub Releases](https://github.com/DamingoNdiwa/verilume/releases), unzip, and open `Verilume.app`.
+**Desktop app**: the v1.0.0 macOS build lands on [GitHub Releases](https://github.com/DamingoNdiwa/verilume/releases) this week — download `Verilume-macOS-*.zip`, unzip, and open `Verilume.app`.
 
 Then upload documents, build the knowledge base, and ask questions — setup takes about a minute.
 
@@ -56,7 +56,7 @@ Then upload documents, build the knowledge base, and ask questions — setup tak
 
 | Platform | Status |
 | --- | --- |
-| macOS | Available on [GitHub Releases](https://github.com/DamingoNdiwa/verilume/releases) |
+| macOS | v1.0.0 coming this week on [GitHub Releases](https://github.com/DamingoNdiwa/verilume/releases) |
 | Windows | Coming Soon |
 | Linux | Coming Soon |
 | Python package | PyPI this week — [install from GitHub](#install-from-github) until then |
@@ -190,7 +190,7 @@ See [ROADMAP.md](ROADMAP.md) for the full plan.
 
 ### Desktop
 
-Download the latest `Verilume-macOS-*.zip` from [GitHub Releases](https://github.com/DamingoNdiwa/verilume/releases), unzip it, and open `Verilume.app`.
+The v1.0.0 macOS build is published to [GitHub Releases](https://github.com/DamingoNdiwa/verilume/releases) this week. Download the latest `Verilume-macOS-*.zip`, unzip it, and open `Verilume.app`.
 
 macOS may show a first-run security warning because test builds are not notarized yet. If that happens, Control-click `Verilume.app`, choose Open, then confirm.
 
@@ -206,13 +206,6 @@ Install the latest committed version from this repository:
 
 ```bash
 python -m pip install "verilume @ git+https://github.com/DamingoNdiwa/verilume.git@main"
-verilume run
-```
-
-Install a tagged test release:
-
-```bash
-python -m pip install "verilume @ git+https://github.com/DamingoNdiwa/verilume.git@v0.1.0-test.1"
 verilume run
 ```
 
