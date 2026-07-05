@@ -138,7 +138,7 @@ on storing page geometry at ingest time, which is the heavier lift.
 - [ ] Plugin system
 - [ ] Cloud sync
 - [ ] API
-- [ ] Enterprise edition
+- [ ] Enterprise edition (open-core; details to be defined — the open-source core stays Apache-2.0)
 
 ## Benchmark Direction
 
