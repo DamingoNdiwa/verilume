@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 - 2026-07-05
 
+- First public release under the EcosVeri organization, with a Zenodo DOI for citation.
 - Repositioned Verilume as a privacy-first desktop AI assistant for documents, research, evidence verification, and hybrid local plus web search.
 - Restructured the README for launch: value proposition, badges, launch banner, demo, quick start, feature grid, "Who Is Verilume For", documentation links, and an expanded comparison table.
 - Refreshed the README demo recording and launch screenshots.
