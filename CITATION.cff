@@ -16,8 +16,8 @@ identifiers:
   - type: doi
     value: 10.5281/zenodo.21210007
     description: DOI for this version.
-repository-code: https://github.com/DamingoNdiwa/verilume
-url: https://github.com/DamingoNdiwa/verilume
+repository-code: https://github.com/EcosVeri/verilume
+url: https://github.com/EcosVeri/verilume
 license: Apache-2.0
 version: 1.0.0
 date-released: 2026-07-05
@@ -48,5 +48,5 @@ preferred-citation:
   title: "Verilume: Privacy-first AI research assistant for your local documents"
   year: 2026
   doi: 10.5281/zenodo.21210006
-  repository-code: https://github.com/DamingoNdiwa/verilume
-  url: https://github.com/DamingoNdiwa/verilume
+  repository-code: https://github.com/EcosVeri/verilume
+  url: https://github.com/EcosVeri/verilume

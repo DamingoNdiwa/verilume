@@ -71,10 +71,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/DamingoNdiwa/verilume"
-Repository = "https://github.com/DamingoNdiwa/verilume"
-Documentation = "https://github.com/DamingoNdiwa/verilume#documentation"
-Issues = "https://github.com/DamingoNdiwa/verilume/issues"
+Homepage = "https://github.com/EcosVeri/verilume"
+Repository = "https://github.com/EcosVeri/verilume"
+Documentation = "https://github.com/EcosVeri/verilume#documentation"
+Issues = "https://github.com/EcosVeri/verilume/issues"
 
 [project.optional-dependencies]
 mac = ["pyinstaller>=6.10.0"]

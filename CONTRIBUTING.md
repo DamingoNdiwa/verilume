@@ -7,7 +7,7 @@ By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 ## Installation
 
 ```bash
-git clone https://github.com/DamingoNdiwa/verilume.git
+git clone https://github.com/EcosVeri/verilume.git
 cd verilume
 python3 -m venv .venv
 source .venv/bin/activate
