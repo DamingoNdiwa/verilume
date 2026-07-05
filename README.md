@@ -35,7 +35,7 @@ The public EcosVeri release is planned after the repository transfer. Until then
 
 ## Demo
 
-![Verilume demo showing the first-run setup checklist, source controls, upload action, export controls, example prompts, and chat input.](docs/assets/verilume-demo.gif)
+![Verilume demo showing the first-run setup checklist, source controls, upload action, export controls, example prompts, and chat input.](docs/assets/verilume-demo-v2.gif)
 
 ## Why Verilume?
 
