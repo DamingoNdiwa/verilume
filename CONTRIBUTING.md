@@ -5,7 +5,7 @@ Thanks for helping improve Verilume. The project is local-first and desktop-orie
 ## Installation
 
 ```bash
-git clone git@github.com:DamingoNdiwa/verilume.git
+git clone https://github.com/DamingoNdiwa/verilume.git
 cd verilume
 python3 -m venv .venv
 source .venv/bin/activate
@@ -47,3 +47,7 @@ Add focused tests when changing routing, ingestion, settings, exports, citation 
 - Link related issues when possible.
 - Do not commit `.env`, tokens, local Chroma databases, uploaded documents, build outputs, logs, or private user files.
 - Keep PRs scoped enough to review without losing the thread.
+
+## License
+
+By contributing to Verilume, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE), the same license that covers the project (Apache-2.0, Section 5 — inbound = outbound).
